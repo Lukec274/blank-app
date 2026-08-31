@@ -194,6 +194,15 @@ canvas{display:block;}
 .stats b{font-variant-numeric:tabular-nums;color:var(--vellum);}
 kbd{font:inherit;font-size:11px;background:#2a1d11;border:1px solid #4a3520;border-radius:2px;padding:1px 5px;color:var(--vellum-dim);}
 
+#tele{
+  position:absolute; left:6px; top:calc(var(--top-h) + env(safe-area-inset-top) + 6px);
+  z-index:22; max-width:min(62vw,340px); padding:7px 9px; border-radius:var(--r);
+  background:rgba(12,9,6,.92); border:1px solid #3a2a19;
+  font-size:10.5px; line-height:1.5; color:var(--vellum-dim);
+  font-variant-numeric:tabular-nums; white-space:pre-wrap; pointer-events:none;
+}
+#tele b{color:var(--gilt);font-weight:700;}
+#tele .p{color:var(--vellum);}
 #toast{
   position:absolute; left:50%; top:calc(var(--top-h) + env(safe-area-inset-top) + 12px);
   transform:translateX(-50%); z-index:30; pointer-events:none;
@@ -240,6 +249,7 @@ kbd{font:inherit;font-size:11px;background:#2a1d11;border:1px solid #4a3520;bord
 
 <div id="mmWrap" class="panel hud-el" hidden><canvas id="mm"></canvas></div>
 <div id="alerts"></div>
+<div id="tele" hidden></div>
 <div id="toast"></div>
 <div id="banner"></div>
 
@@ -277,8 +287,10 @@ const dist = (ax,ay,bx,by)=>Math.sqrt(dist2(ax,ay,bx,by));
 const now = ()=>performance.now();
 
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
-let RNG = mulberry32(1);
+let RNG = mulberry32(1);            /* simulation stream — consumed in lockstep with ticks */
+let VRNG = mulberry32(0xC0FFEE);    /* presentation stream — camera shake, particles, chrome */
 const rnd = ()=>RNG();
+const vrnd = ()=>VRNG();
 const rndi = (n)=>Math.floor(RNG()*n);
 const rrange = (a,b)=>a+RNG()*(b-a);
 const pick = (arr)=>arr[Math.floor(RNG()*arr.length)];
@@ -1859,18 +1871,74 @@ const knownAt=(p,x,y)=> p.explored[idx(x|0,y|0)]===1;
 /* ============================================================
    COMPUTER OPPONENT
    ============================================================ */
-function newBrain(p,diff){
-  return {p, diff, t:0, slow:0, wave:0, waveSize: diff==='easy'?5:(diff==='hard'?8:6),
-    attacking:false, army:[], nextAttack: diff==='easy'?430:(diff==='hard'?175:300),
-    base:null, defend:0, buildQ:[], lastBuild:0, farmT:0};
-}
+/* ------------------------------------------------------------
+   The opponent is a small strategic planner, not a pile of rules
+   that fire independently. Two plan slots run concurrently — one
+   owns the villagers and the treasury, one owns the army — because
+   an RTS economy cannot pause while a battle is on. A plan holds
+   its units until it reaches COMPLETE, FAILED or RETREATING, so no
+   generic "go home" rule can overwrite an attack mid-march.
+   ------------------------------------------------------------ */
+const AI_CFG = {
+  think: 1.2,                       /* seconds between strategic decisions */
+  work:  {berry:3, tree:3, gold:4, stone:4, farm:1},
+  build: {maxPending:{house:1, farm:2, tc:1, castle:1, wonder:1, def:2}, cd:{house:6, farm:4, mil:10}},
+  attack:{minForce:8, musterWait:35, targetLock:22, regroup:9, retreatAt:.42, engageRange:13},
+};
 const AI_MIX={
   0:{f:.50,w:.38,g:.09,s:.03},
   1:{f:.42,w:.34,g:.16,s:.08},
   2:{f:.40,w:.30,g:.22,s:.08},
   3:{f:.38,w:.28,g:.26,s:.08},
 };
-function aiBuildingsOf(p,kind){let n=0;for(const b of G.blds)if(b.owner===p.id&&b.kind===kind)n++;return n;}
+function newBrain(p,diff){
+  return {p, diff, t:99, base:null,
+    econ:null, mil:null,                 /* the two live plans */
+    reserve:{f:0,w:0,g:0,s:0},           /* treasury the econ plan has ring-fenced */
+    cd:{house:0,farm:0,mil:0},
+    wave:0, nextAttack: diff==='easy'?430:(diff==='hard'?175:300),
+    defendT:0, tele:{},
+  };
+}
+/* ---- treasury: reserved resources may only be spent by the plan that reserved them ---- */
+function aiFree(p,k){ return p.res[k]-(p.brain.reserve[k]||0); }
+function aiCanSpend(p,cost,privileged){
+  for(const k in cost){ if((privileged? p.res[k] : aiFree(p,k)) < cost[k]) return false; }
+  return true;
+}
+function aiSpend(p,cost,privileged){
+  if(!aiCanSpend(p,cost,privileged))return false;
+  pay(p,cost); return true;
+}
+function aiSetReserve(p,cost){
+  const r=p.brain.reserve; r.f=r.w=r.g=r.s=0;
+  for(const k in cost)r[k]=cost[k];
+}
+/* ---- shared queries ---- */
+function workersOn(p,res){
+  let n=0; for(const u of G.units)
+    if(u.owner===p.id&&u.kind==='villager'&&u.target===res&&u.task&&
+       (u.task.kind==='gather'||u.task.kind==='return'))n++;
+  return n;
+}
+function findResFree(p,x,y,kind,maxR,cap){
+  let best=null,bd=(maxR||24)**2;
+  for(const r of G.res){
+    if(r.kind!==kind||r.amt<=0)continue;
+    const d=dist2(x,y,r.x,r.y);
+    if(d<bd&&workersOn(p,r)<cap){bd=d;best=r;}
+  }
+  return best;
+}
+function aiVillagers(p){const a=[];for(const u of G.units)if(u.owner===p.id&&u.kind==='villager')a.push(u);return a;}
+function aiArmy(p){const a=[];for(const u of G.units)if(u.owner===p.id&&u.kind!=='villager'&&u.alive)a.push(u);return a;}
+function aiTC(p){for(const b of G.blds)if(b.owner===p.id&&b.kind==='tc'&&b.alive)return b;return null;}
+function aiBuildingsOf(p,kind){let n=0;for(const b of G.blds)if(b.owner===p.id&&b.kind===kind&&b.alive)n++;return n;}
+function aiPending(p,kind){let n=0;for(const b of G.blds)if(b.owner===p.id&&b.kind===kind&&b.built<1)n++;return n;}
+function aiPower(units){
+  let v=0; for(const u of units) if(u.alive) v+=(u.st.atk+u.st.ar*2)*(u.hp/Math.max(1,u.maxHp))+4;
+  return v;
+}
 function aiFindSpot(p,kind,near,minR){
   const B=BLD[kind], n=B.size;
   const cx=near.x|0, cy=near.y|0;
@@ -1889,48 +1957,173 @@ function aiFindSpot(p,kind,near,minR){
   }
   return null;
 }
-function workersOn(p,res){
-  let n=0; for(const u of G.units)
-    if(u.owner===p.id&&u.kind==='villager'&&u.target===res&&u.task&&
-       (u.task.kind==='gather'||u.task.kind==='return'))n++;
-  return n;
-}
-function findResFree(p,x,y,kind,maxR,cap){
-  let best=null,bd=(maxR||24)**2;
-  for(const r of G.res){
-    if(r.kind!==kind||r.amt<=0)continue;
-    const d=dist2(x,y,r.x,r.y);
-    if(d<bd&&workersOn(p,r)<cap){bd=d;best=r;}
-  }
-  return best;
-}
-function aiVillagers(p){const a=[];for(const u of G.units)if(u.owner===p.id&&u.kind==='villager')a.push(u);return a;}
-function aiArmy(p){const a=[];for(const u of G.units)if(u.owner===p.id&&u.kind!=='villager')a.push(u);return a;}
-function aiTC(p){for(const b of G.blds)if(b.owner===p.id&&b.kind==='tc')return b;return null;}
 function aiEnemyTarget(p,from){
   let best=null,bd=1e9;
   const base=from||p.brain.base||{x:G.w/2,y:G.h/2};
   for(const b of G.blds){
-    if(b.owner===p.id)continue;
+    if(b.owner===p.id||!b.alive)continue;
     const pl=G.players[b.owner]; if(!pl||pl.id===p.id)continue;
-    let w = b.kind==='tc'?0.7:(BLD[b.kind].trains?0.85:1);
+    const w = b.kind==='tc'?0.7:(BLD[b.kind].trains?0.85:1);
     const d=dist2(base.x,base.y,b.x,b.y)*w;
     if(d<bd){bd=d;best=b;}
   }
   if(best)return best;
-  for(const u of G.units)if(u.owner!==p.id)return u;
+  let bu=null,bud=1e9;
+  for(const u of G.units){ if(u.owner===p.id||!u.alive)continue;
+    const d=dist2(base.x,base.y,u.x,u.y); if(d<bud){bud=d;bu=u;} }
+  return bu;
+}
+function aiThreat(p){
+  const br=p.brain;
+  for(const b of G.blds){
+    if(b.owner!==p.id||b.hitT<=0)continue;
+    if(br.base&&dist(b.x,b.y,br.base.x,br.base.y)>26)continue;
+    return {x:b.x,y:b.y};
+  }
+  for(const u of G.units){
+    if(u.owner!==p.id||u.kind!=='villager'||u.hitT<=0)continue;
+    return {x:u.x,y:u.y};
+  }
   return null;
 }
+
+/* ---- economy plans: GROW, AGE_UP, FARM_TRANSITION, REBUILD ---- */
+function aiEconPlan(p,step){
+  const br=p.brain, vil=aiVillagers(p), tc=aiTC(p);
+  const ageCost=AGE_UP[p.age+1];
+  const cost=ageCost? Object.assign({}, ageCost.f?{f:ageCost.f}:{}, ageCost.g?{g:ageCost.g}:{}) : null;
+  const easy=br.diff==='easy';
+  const vilTarget=(easy?[12,16,18,18]:br.diff==='hard'?[18,26,32,32]:[16,22,26,26])[p.age];
+  const ageQueued=G.blds.some(b=>b.owner===p.id&&b.queue.some(q=>q.kind==='age'));
+  let type='GROW';
+  if(!tc) type='REBUILD';
+  else if(ageCost && !ageQueued && vil.length>=Math.round(vilTarget*.85) && aiBuildingsOf(p,'barracks')>0)
+    type='AGE_UP';
+  const foodNodes=G.res.some(r=>r.kind==='berry'&&r.amt>0&&br.base&&dist(r.x,r.y,br.base.x,br.base.y)<24);
+  if(type==='GROW' && !foodNodes && aiBuildingsOf(p,'farm')<3) type='FARM_TRANSITION';
+
+  if(!br.econ||br.econ.type!==type) br.econ={type,started:G.tick};
+  const plan=br.econ;
+
+  /* ring-fence what the plan needs before anything else can spend it */
+  if(type==='AGE_UP'&&cost) aiSetReserve(p,cost);
+  else if(type==='FARM_TRANSITION') aiSetReserve(p,{w:BLD.farm.cost.w*2});
+  else if(type==='REBUILD') aiSetReserve(p,BLD.tc.cost);
+  else aiSetReserve(p,{});
+  plan.vilTarget=vilTarget;
+  return plan;
+}
+/* ---- military plan: MUSTER -> TRAVEL -> ENGAGE -> REGROUP -> RETREAT/COMPLETE ---- */
+function aiOwned(br,u){ return br.mil && br.mil.units.indexOf(u.id)>=0; }
+function aiStartAttack(p,units,target){
+  const br=p.brain, A=AI_CFG.attack;
+  br.mil={type:'ATTACK',state:'MUSTER',units:units.map(u=>u.id),
+    target:target?target.id:0, at:target?{x:target.x,y:target.y}:null,
+    started:G.tick,lastCmd:0,lock:0,power0:aiPower(units),regroupT:0};
+  br.wave++;
+  const rally=br.base||{x:G.w/2,y:G.h/2};
+  for(const u of units) cmdMove([u],rally.x+rndi(7)-3,rally.y+rndi(7)-3);
+  if(G.human&&br.wave===1&&target)
+    pushAlert(p.name+' is marching on you — raise soldiers','warn',{x:target.x,y:target.y});
+}
+function aiMilPlan(p,step){
+  const br=p.brain, A=AI_CFG.attack, army=aiArmy(p);
+  const threat=aiThreat(p);
+  br.defendT=threat? 12 : Math.max(0,br.defendT-step);
+
+  /* a raid on the town outranks anything short of an attack already in contact */
+  if(threat && (!br.mil || br.mil.type!=='DEFEND') &&
+     (!br.mil || br.mil.state!=='ENGAGE' || dist(br.mil.at.x,br.mil.at.y,br.base.x,br.base.y)<30)){
+    br.mil={type:'DEFEND',state:'ENGAGE',units:army.map(u=>u.id),at:threat,target:0,
+      started:G.tick,lastCmd:0,lock:0,power0:aiPower(army),regroupT:0};
+  }
+  let plan=br.mil;
+  if(plan){
+    plan.units=plan.units.filter(id=>{const u=G.ents.get(id);return u&&u.alive;});
+    const units=plan.units.map(id=>G.ents.get(id)).filter(Boolean);
+    if(!units.length){ br.mil=null; plan=null; }
+    else {
+      const power=aiPower(units);
+      const age=(G.tick-plan.started)/30;
+      if(plan.type==='DEFEND'){
+        if(br.defendT<=0){ br.mil=null; }
+        else {
+          plan.at=threat||plan.at;
+          if(G.tick-plan.lastCmd>45){ plan.lastCmd=G.tick;
+            for(const u of units) if(!u.target||!u.target.alive) cmdAttackMove([u],plan.at.x,plan.at.y); }
+          /* pull in anything new that has finished training */
+          for(const u of army) if(plan.units.indexOf(u.id)<0 && dist(u.x,u.y,br.base.x,br.base.y)<34) plan.units.push(u.id);
+        }
+      } else if(plan.type==='ATTACK'){
+        const tgt=G.ents.get(plan.target);
+        if(plan.state==='MUSTER'){
+          for(const u of army) if(plan.units.indexOf(u.id)<0) plan.units.push(u.id);
+          const need=Math.min(A.minForce+br.wave*(br.diff==='hard'?2.5:2), br.diff==='easy'?14:22);
+          if(units.length>=need || age>A.musterWait){
+            plan.state='TRAVEL'; plan.lastCmd=0;
+          }
+        }
+        if(plan.state==='TRAVEL'){
+          if(!tgt||!tgt.alive){ const t2=aiEnemyTarget(p); if(t2){plan.target=t2.id;plan.at={x:t2.x,y:t2.y};} }
+          if(G.tick-plan.lastCmd>60){ plan.lastCmd=G.tick;
+            for(const u of units) if(!u.task||(!u.target&&u.task.kind!=='amove'))
+              cmdAttackMove([u],plan.at.x+rndi(5)-2,plan.at.y+rndi(5)-2); }
+          const arrived=units.filter(u=>dist(u.x,u.y,plan.at.x,plan.at.y)<A.engageRange).length;
+          if(arrived>=Math.max(1,units.length*0.4)) plan.state='ENGAGE';
+          if(age>180) plan.state='ENGAGE';
+        }
+        else if(plan.state==='ENGAGE'){
+          if(power < plan.power0*A.retreatAt && units.length<3){ plan.state='RETREAT'; }
+          else {
+            plan.lock-=step;
+            if((!tgt||!tgt.alive)&&plan.lock<=0){
+              const mid=units[0];
+              const t2=aiEnemyTarget(p,mid);
+              if(t2){ plan.target=t2.id; plan.at={x:t2.x,y:t2.y}; plan.lock=A.targetLock; }
+              else { br.mil=null; }
+            }
+            if(br.mil&&G.tick-plan.lastCmd>90){ plan.lastCmd=G.tick;
+              for(const u of units) if(!u.task&&(!u.target||!u.target.alive))
+                cmdAttackMove([u],plan.at.x+rndi(5)-2,plan.at.y+rndi(5)-2); }
+          }
+        }
+        else if(plan.state==='RETREAT'){
+          if(G.tick-plan.lastCmd>60){ plan.lastCmd=G.tick;
+            for(const u of units) if(!u.target||!u.target.alive) cmdMove([u],br.base.x+rndi(9)-4,br.base.y+rndi(9)-4); }
+          if(units.every(u=>dist(u.x,u.y,br.base.x,br.base.y)<16)){ br.mil=null; br.nextAttack=Math.max(br.nextAttack,60); }
+        }
+      }
+    }
+  }
+  /* no plan in charge: consider opening one, otherwise garrison the town */
+  br.nextAttack-=step*(br.diff==='hard'?1.5:br.diff==='easy'?.8:1.1);
+  if(!br.mil && !br.defendT){
+    const need=Math.min(A.minForce+br.wave*(br.diff==='hard'?2.5:2), br.diff==='easy'?14:22);
+    if((br.nextAttack<=0||army.length>=need)&&army.length>=Math.min(need,br.diff==='easy'?6:5)){
+      const tgt=aiEnemyTarget(p);
+      if(tgt){ aiStartAttack(p,army,tgt); br.nextAttack=(br.diff==='easy'?150:br.diff==='hard'?70:100); }
+    }
+  }
+  for(const u of army){
+    if(aiOwned(br,u)||u.task||(u.target&&u.target.alive))continue;
+    if(br.base&&dist(u.x,u.y,br.base.x,br.base.y)>16) cmdMove([u],br.base.x+rndi(8)-4,br.base.y+rndi(8)-4);
+  }
+}
+
 function aiThink(p,dt){
   const br=p.brain; br.t+=dt;
-  if(br.t<1.1)return; const step=br.t; br.t=0;
+  if(br.t<AI_CFG.think)return;
+  const step=br.t; br.t=0;
   const tc=aiTC(p), vil=aiVillagers(p), army=aiArmy(p);
   if(tc&&!br.base)br.base={x:tc.x,y:tc.y};
-  const mix=AI_MIX[p.age], age=p.age;
-  const easy=br.diff==='easy', hard=br.diff==='hard';
+  const mix=AI_MIX[p.age], easy=br.diff==='easy', hard=br.diff==='hard';
+  for(const k in br.cd) br.cd[k]=Math.max(0,br.cd[k]-step);
   if(hard){ p.res.f+=1.6*step;p.res.w+=1.4*step;p.res.g+=.5*step;p.res.s+=.25*step; }
 
-  /* --- economy: every villager should be carrying something --- */
+  const econ=aiEconPlan(p,step);
+  const W=AI_CFG.work;
+
+  /* ---- villagers: every one of them should be carrying something ---- */
   const counts={f:0,w:0,g:0,s:0}, free=[];
   for(const u of vil){
     const t=u.task;
@@ -1944,7 +2137,7 @@ function aiThink(p,dt){
   for(const k of RES_KEYS)want[k]=Math.max(k==='f'?3:1,Math.round(vil.length*mix[k]));
   if(p.res.f<150)want.f+=2;
   if(p.res.w<80)want.w+=1;
-  /* nobody idle but the larder is empty: pull a woodcutter onto food */
+  if(econ.type==='AGE_UP'){ want.f+=3; want.g+=1; }
   if(!free.length&&counts.f<want.f-1){
     const c=vil.find(u=>u.carryType==='w'&&u.task&&u.task.kind==='gather');
     if(c)free.push(c);
@@ -1956,156 +2149,124 @@ function aiThink(p,dt){
     counts[k]++;
     let r=null;
     if(k==='f'){
-      r=findResFree(p,u.x,u.y,'berry',24,3);
+      r=findResFree(p,u.x,u.y,'berry',24,W.berry);
       if(!r){
-        const farm=G.blds.find(b=>b.owner===p.id&&b.kind==='farm'&&b.alive&&b.food>0&&workersOn(p,b)===0);
+        const farm=G.blds.find(b=>b.owner===p.id&&b.kind==='farm'&&b.alive&&b.food>0&&workersOn(p,b)<W.farm);
         if(farm){cmdGather([u],farm);continue;}
-        if(canAfford(p,BLD.farm.cost)&&farmsQueued<2&&aiBuildingsOf(p,'farm')<Math.max(6,vil.length*.6)){
-          const anchor=G.blds.find(b=>b.owner===p.id&&b.kind==='mill')||aiTC(p)||br.base;
-          const sp=aiFindSpot(p,'farm',anchor,1);
-          if(sp){pay(p,BLD.farm.cost);const nb=placeBld('farm',sp.x,sp.y,p.id,false);cmdBuildAt([u],nb);farmsQueued++;continue;}
+        const privileged = econ.type==='FARM_TRANSITION';
+        if(br.cd.farm<=0 && farmsQueued<2 && aiPending(p,'farm')<AI_CFG.build.maxPending.farm &&
+           aiBuildingsOf(p,'farm')<Math.max(6,vil.length*.6) && aiCanSpend(p,BLD.farm.cost,privileged)){
+          const anchor=G.blds.find(b=>b.owner===p.id&&b.kind==='mill')||tc||br.base;
+          const sp=anchor?aiFindSpot(p,'farm',anchor,1):null;
+          if(sp&&aiSpend(p,BLD.farm.cost,privileged)){
+            const nb=placeBld('farm',sp.x,sp.y,p.id,false);
+            cmdBuildAt([u],nb); farmsQueued++; br.cd.farm=AI_CFG.build.cd.farm; continue;
+          }
         }
         r=findRes(u.x,u.y,'berry',30);
       }
     }
-    else if(k==='w')r=findResFree(p,u.x,u.y,'tree',28,3)||findRes(u.x,u.y,'tree',34);
-    else if(k==='g')r=findResFree(p,u.x,u.y,'gold',32,4)||findRes(u.x,u.y,'gold',40);
-    else if(k==='s')r=findResFree(p,u.x,u.y,'stone',32,4)||findRes(u.x,u.y,'stone',40);
+    else if(k==='w')r=findResFree(p,u.x,u.y,'tree',28,W.tree)||findRes(u.x,u.y,'tree',34);
+    else if(k==='g')r=findResFree(p,u.x,u.y,'gold',32,W.gold)||findRes(u.x,u.y,'gold',40);
+    else if(k==='s')r=findResFree(p,u.x,u.y,'stone',32,W.stone)||findRes(u.x,u.y,'stone',40);
     if(!r)r=findRes(u.x,u.y,'tree',40)||findRes(u.x,u.y,'berry',40);
     if(r)cmdGather([u],r);
     else if(br.base)cmdMove([u],br.base.x+rndi(6)-3,br.base.y+rndi(6)-3);
   }
 
-  /* --- construction --- */
-  const houses=aiBuildingsOf(p,'house');
+  /* ---- construction, with a pending lock and a cooldown per kind ---- */
   const builders=vil.filter(u=>!u.task||u.task.kind==='gather');
-  const startBuild=(kind)=>{
+  const startBuild=(kind,privileged)=>{
     if(!builders.length||!br.base)return false;
     const B=BLD[kind];
-    if(!canAfford(p,B.cost))return false;
+    if(aiPending(p,kind)>=(AI_CFG.build.maxPending[kind]||2))return false;
+    if(!aiCanSpend(p,B.cost,privileged))return false;
     const anchor = kind==='lumber'? (findRes(br.base.x,br.base.y,'tree',30)||br.base)
                  : kind==='mining'? (findRes(br.base.x,br.base.y,'gold',34)||findRes(br.base.x,br.base.y,'stone',34)||br.base)
                  : br.base;
     const sp=aiFindSpot(p,kind,anchor, kind==='house'?3:2);
     if(!sp)return false;
-    pay(p,B.cost);
+    if(!aiSpend(p,B.cost,privileged))return false;
     const nb=placeBld(kind,sp.x,sp.y,p.id,false);
-    const crew=builders.splice(0,kind==='tc'||kind==='castle'?3:2);
-    cmdBuildAt(crew,nb);
+    cmdBuildAt(builders.splice(0,kind==='tc'||kind==='castle'?3:2),nb);
     return true;
   };
-  const pending=(k)=>G.blds.some(b=>b.owner===p.id&&b.kind===k&&b.built<1);
-  const housesComing=G.blds.filter(b=>b.owner===p.id&&b.kind==='house'&&b.built<1).length;
-  if(!tc&&p.res.w>=BLD.tc.cost.w) startBuild('tc');
-  else if(p.popCap+housesComing*5-p.pop<=(age>0?5:3) && p.popCap<p.popMax && housesComing<2) startBuild('house');
-  else if(!aiBuildingsOf(p,'lumber')&&vil.length>=6&&!pending('lumber')) startBuild('lumber');
-  else if(!aiBuildingsOf(p,'mill')&&vil.length>=8) startBuild('mill');
-  else if(!aiBuildingsOf(p,'mining')&&vil.length>=10) startBuild('mining');
-  else if(!aiBuildingsOf(p,'barracks')&&vil.length>=(easy?12:9)) startBuild('barracks');
-  else if(age>=1&&!aiBuildingsOf(p,'range')) startBuild('range');
-  else if(age>=1&&!aiBuildingsOf(p,'stable')) startBuild('stable');
-  else if(age>=1&&!aiBuildingsOf(p,'smith')&&vil.length>=16) startBuild('smith');
-  else if(age>=1&&aiBuildingsOf(p,'tower')<(hard?3:2)&&p.res.s>=200) startBuild('tower');
-  else if(age>=2&&!aiBuildingsOf(p,'siege')&&!easy) startBuild('siege');
-  else if(age>=2&&aiBuildingsOf(p,'tc')<2&&p.res.w>500) startBuild('tc');
-  else if(age>=2&&aiBuildingsOf(p,'barracks')+aiBuildingsOf(p,'range')+aiBuildingsOf(p,'stable')<4&&p.res.w>420) startBuild(pick(['range','stable','barracks']));
+  const housesComing=aiPending(p,'house');
+  if(econ.type==='REBUILD') startBuild('tc',true);
+  else if(p.popCap+housesComing*5-p.pop<=(p.age>0?5:3) && p.popCap<p.popMax &&
+          housesComing<AI_CFG.build.maxPending.house && br.cd.house<=0){
+    if(startBuild('house'))br.cd.house=AI_CFG.build.cd.house;
+  }
+  else if(!aiBuildingsOf(p,'lumber')&&vil.length>=6&&!aiPending(p,'lumber')) startBuild('lumber');
+  else if(!aiBuildingsOf(p,'mill')&&vil.length>=8&&!aiPending(p,'mill')) startBuild('mill');
+  else if(!aiBuildingsOf(p,'mining')&&vil.length>=10&&!aiPending(p,'mining')) startBuild('mining');
+  else if(!aiBuildingsOf(p,'barracks')&&vil.length>=(easy?12:9)&&!aiPending(p,'barracks')) startBuild('barracks');
+  else if(p.age>=1&&!aiBuildingsOf(p,'range')&&!aiPending(p,'range')) startBuild('range');
+  else if(p.age>=1&&!aiBuildingsOf(p,'stable')&&!aiPending(p,'stable')) startBuild('stable');
+  else if(p.age>=1&&!aiBuildingsOf(p,'smith')&&vil.length>=16&&!aiPending(p,'smith')) startBuild('smith');
+  else if(p.age>=1&&aiBuildingsOf(p,'tower')<(hard?3:2)&&aiFree(p,'s')>=200&&aiPending(p,'tower')<2) startBuild('tower');
+  else if(p.age>=2&&!aiBuildingsOf(p,'siege')&&!easy&&!aiPending(p,'siege')) startBuild('siege');
+  else if(p.age>=2&&aiBuildingsOf(p,'tc')<2&&aiFree(p,'w')>500&&!aiPending(p,'tc')) startBuild('tc');
+  else if(p.age>=2&&aiBuildingsOf(p,'barracks')+aiBuildingsOf(p,'range')+aiBuildingsOf(p,'stable')<4&&aiFree(p,'w')>420)
+    startBuild(pick(['range','stable','barracks']));
 
-  /* --- training & research --- */
-  const maxVil = easy?18:(hard?32:26);
-  /* a villager target per age keeps food free for the age-up instead of endless peasants */
-  const vilTarget = (easy?[12,16,18,18]:hard?[18,26,32,32]:[16,22,26,26])[p.age];
-  const ageCost = AGE_UP[p.age+1];
-  const wantsAge = !!ageCost && vil.length>=Math.min(vilTarget,easy?14:12) && aiBuildingsOf(p,'barracks')>0;
-  const banking = wantsAge && p.res.f >= (ageCost.f||0)*0.45 && p.res.f < (ageCost.f||0)+70;
-  const armyNow = army.length;
+  /* ---- production: reserved resources are simply invisible to these buys ---- */
   for(const b of G.blds){
     if(b.owner!==p.id||b.built<1||b.queue.length>=(hard?4:3))continue;
     const B=BLD[b.kind];
     if(b.kind==='tc'){
-      const ageQueued=b.queue.some(q=>q.kind==='age');
-      if(vil.length<vilTarget&&p.pop<p.popCap&&!(banking&&!ageQueued))queueUnit(b,'villager');
-      if(wantsAge&&!ageQueued)queueAge(b);
-      if(p.age>=1&&!p.techs.has('wheelbarrow')&&p.res.f>400)queueTech(b,'wheelbarrow');
-      if(p.age>=2&&!p.techs.has('handcart')&&p.res.f>600)queueTech(b,'handcart');
-      if(!p.techs.has('loom')&&p.res.g>120)queueTech(b,'loom');
+      if(econ.type==='AGE_UP'&&!b.queue.some(q=>q.kind==='age')) queueAge(b);
+      if(vil.length<econ.vilTarget&&p.pop<p.popCap&&aiCanSpend(p,UNITS.villager.cost))
+        queueUnit(b,'villager');
+      if(p.age>=1&&!p.techs.has('wheelbarrow')&&aiFree(p,'f')>400)queueTech(b,'wheelbarrow');
+      if(p.age>=2&&!p.techs.has('handcart')&&aiFree(p,'f')>600)queueTech(b,'handcart');
+      if(!p.techs.has('loom')&&aiFree(p,'g')>120)queueTech(b,'loom');
     }
-    else if(B.trains&&b.kind!=='tc'&&b.kind!=='monastery'){
-      const army2=aiArmy(p).length;
-      if(p.pop<p.popCap-1&&(vil.length>=(easy?11:8))&&!(banking&&armyNow>=3)){
+    else if(B.trains&&b.kind!=='monastery'){
+      if(p.pop<p.popCap-1&&vil.length>=(easy?11:8)){
         const opts=B.trains.filter(k=>UNITS[k].age===undefined||UNITS[k].age<=p.age);
         if(opts.length){
           const roll=rnd();
           let kind=opts[opts.length-1];
           if(b.kind==='barracks')kind = p.age>=1&&roll<.4?'spearman':'militia';
           if(b.kind==='range')kind = roll<.72?'archer':'skirmisher';
-          if(b.kind==='stable')kind = p.age>=2&&p.res.g>200?'knight':'scout';
+          if(b.kind==='stable')kind = p.age>=2&&aiFree(p,'g')>200?'knight':'scout';
           if(b.kind==='siege')kind = roll<.5?'ram':'mangonel';
           if(UNITS[kind].age!==undefined&&UNITS[kind].age>p.age)kind=opts[0];
-          queueUnit(b,kind);
+          const garrison = army.length < (hard?8:easy?4:6);   /* always affordable */
+          if(aiCanSpend(p,UNITS[kind].cost,garrison))queueUnit(b,kind);
         }
       }
     }
-    else if(b.kind==='smith'&&p.res.f>350){
+    else if(b.kind==='smith'&&aiFree(p,'f')>350){
       for(const t of ['forge1','armor1','fletch1','forge2','armor2','fletch2']){
-        const T=TECHS[t]; if((T.age||0)<=p.age&&!p.techs.has(t)){ if(queueTech(b,t))break; }
+        const T=TECHS[t]; if((T.age||0)<=p.age&&!p.techs.has(t)&&aiCanSpend(p,T.cost)){ if(queueTech(b,t))break; }
       }
     }
-    else if(b.kind==='mill'&&p.res.f>300&&p.age>=1&&!p.techs.has('horsecollar'))queueTech(b,'horsecollar');
-    else if(b.kind==='lumber'&&p.res.f>250&&p.age>=1&&!p.techs.has('axe1'))queueTech(b,'axe1');
-    else if(b.kind==='mining'&&p.res.f>250&&p.age>=1&&!p.techs.has('mining1'))queueTech(b,'mining1');
+    else if(b.kind==='mill'&&aiFree(p,'f')>300&&p.age>=1&&!p.techs.has('horsecollar'))queueTech(b,'horsecollar');
+    else if(b.kind==='lumber'&&aiFree(p,'f')>250&&p.age>=1&&!p.techs.has('axe1'))queueTech(b,'axe1');
+    else if(b.kind==='mining'&&aiFree(p,'f')>250&&p.age>=1&&!p.techs.has('mining1'))queueTech(b,'mining1');
   }
-  /* unit upgrades */
   for(const b of G.blds){
     if(b.owner!==p.id||b.built<1||b.queue.length)continue;
     const B=BLD[b.kind]; if(!B.trains)continue;
     for(const k of B.trains){
       const chain=UPGRADES[k]; if(!chain)continue;
       const lvl=p.upg[k]||0, up=chain[lvl];
-      if(up&&up.age<=p.age&&canAfford(p,up.cost)&&p.res.f>up.cost.f*1.6){queueUpg(b,k,lvl);break;}
+      if(up&&up.age<=p.age&&aiCanSpend(p,up.cost)&&aiFree(p,'f')>up.cost.f*1.6){queueUpg(b,k,lvl);break;}
     }
   }
 
-  /* --- defence: only troops near home answer a raid --- */
-  let threat=null;
-  for(const b of G.blds){
-    if(b.owner!==p.id||b.hitT<=0)continue;
-    if(br.base&&dist(b.x,b.y,br.base.x,br.base.y)>26)continue;
-    threat=b;break;
-  }
-  if(threat){ br.defend=12;
-    for(const u of army){
-      if(u.target&&u.target.alive)continue;
-      if(br.base&&dist(u.x,u.y,br.base.x,br.base.y)>30)continue;   /* leave the push alone */
-      cmdAttackMove([u],threat.x,threat.y);
-    }
-  } else br.defend=Math.max(0,br.defend-step);
+  aiMilPlan(p,step);
 
-  /* --- offence --- */
-  br.nextAttack-=step*(hard?1.5:easy?.8:1.1);
-  br.pushT=Math.max(0,(br.pushT||0)-step);
-  const ready=army;
-  const need2=Math.min(br.waveSize+br.wave*(easy?1.5:hard?2.5:2), easy?14:(hard?26:20));
-  if(!br.defend&&br.pushT<=0&&(br.nextAttack<=0||ready.length>=need2)&&ready.length>=Math.min(need2,easy?6:5)){
-    const tgt=aiEnemyTarget(p);
-    if(tgt){
-      br.wave++; br.nextAttack=(easy?150:hard?70:100); br.pushT=easy?60:120;
-      for(const u of ready) cmdAttackMove([u],tgt.x+rndi(5)-2,tgt.y+rndi(5)-2);
-      if(G.human&&br.wave===1)pushAlert(p.name+' is marching on you — raise soldiers','warn',{x:tgt.x,y:tgt.y});
-    }
-  }
-  /* an army mid-push keeps pushing; otherwise it drifts home */
-  let repathed=0;
-  for(const u of ready){
-    if(u.task||(u.target&&u.target.alive))continue;
-    if(repathed>=10)break;
-    repathed++;
-    if(br.pushT>0){
-      const t2=aiEnemyTarget(p,u);
-      if(t2){ cmdAttackMove([u],t2.x+rndi(5)-2,t2.y+rndi(5)-2); continue; }
-    }
-    if(br.base&&dist(u.x,u.y,br.base.x,br.base.y)>16)
-      cmdMove([u],br.base.x+rndi(8)-4,br.base.y+rndi(8)-4);
-  }
+  /* ---- telemetry: what the planner believes, readable in game and in tests ---- */
+  br.tele={age:p.age, econ:econ.type, mil:br.mil?br.mil.type+':'+br.mil.state:'—',
+    force:br.mil?br.mil.units.length:0, wave:br.wave,
+    reserve:{...br.reserve}, vil:vil.length, army:army.length,
+    split:`${counts.f}/${counts.w}/${counts.g}/${counts.s}`,
+    want:`${want.f}/${want.w}/${want.g}/${want.s}`,
+    pending:G.blds.filter(b=>b.owner===p.id&&b.built<1).map(b=>b.kind).join(',')||'—',
+    nextAttack:Math.round(br.nextAttack)};
 }
 
 /* ============================================================
@@ -2233,7 +2394,7 @@ function draw(dt){
   const p=G.human;
   camApply();
   ctx.setTransform(cam.dpr,0,0,cam.dpr,0,0);
-  if(cam.shake>0){ ctx.translate((rnd()-.5)*cam.shake,(rnd()-.5)*cam.shake); cam.shake=Math.max(0,cam.shake-dt*30); }
+  if(cam.shake>0){ ctx.translate((vrnd()-.5)*cam.shake,(vrnd()-.5)*cam.shake); cam.shake=Math.max(0,cam.shake-dt*30); }
   ctx.fillStyle='#0a1016';ctx.fillRect(0,0,cam.vw,cam.vh);
   ctx.imageSmoothingEnabled=false;
   /* visible tile bounds */
@@ -2829,6 +2990,7 @@ window.addEventListener('keydown',(e)=>{
   if(k==='h'){const tc=G.blds.find(b=>b.owner===G.human.id&&b.kind==='tc');if(tc){cam.x=tc.x;cam.y=tc.y;selectEnt(tc,false);}}
   if(k==='a'&&selectedUnits().length){UI.armMode='amove';toast('Tap a target area');}
   if(k==='s'){cmdStopAll();}
+  if(k==='i'){ const t=$('tele'); t.hidden=!t.hidden; toast(t.hidden?'Planner view off':'Planner view on'); }
   if(k==='delete')deleteSelected();
   if(k>='1'&&k<='9'){const i=+k-1;const cmds=UI.cmds||[];if(cmds[i]&&!cmds[i].disabled)cmds[i].act();}
 });
@@ -3097,6 +3259,18 @@ function refreshHUD(force){
       qEl.appendChild(d);
     });
   } else if(qEl.childElementCount) qEl.innerHTML='';
+  /* opponent planner telemetry */
+  const te=$('tele');
+  if(!te.hidden){
+    te.innerHTML=G.players.filter(x=>x.brain).map(x=>{
+      const t=x.brain.tele||{};
+      return `<span class="p" style="color:${x.color}">${x.name}</span>  <b>${AGES[t.age||0]}</b>\n`+
+        `plan  ${t.econ||'—'} / ${t.mil||'—'}  force ${t.force||0}  wave ${t.wave||0}\n`+
+        `vils ${t.vil||0} (${t.split||''} vs ${t.want||''})  army ${t.army||0}\n`+
+        `reserve f${Math.round((t.reserve||{}).f||0)} w${Math.round((t.reserve||{}).w||0)} g${Math.round((t.reserve||{}).g||0)}  next atk ${t.nextAttack}\n`+
+        `building ${t.pending||'—'}`;
+    }).join('\n\n');
+  }
   /* command grid */
   const sig=[...G.sel].sort().join(',')+'|'+UI.page+'|'+(G.placing?G.placing.kind:'')+'|'+p.age+'|'+(b?b.queue.length:0);
   if(force||sig!==UI.sig){
@@ -3204,6 +3378,7 @@ function newGame(opts){
   Object.assign(G,{units:[],blds:[],res:[],projs:[],fx:[],ents:new Map(),nextId:1,
     players:[],sel:new Set(),placing:null,time:0,over:false,started:false,paused:false});
   G.demo=!!opts.demo;                       /* the title diorama, never inherited */
+  G.tick=0; acc=0;
   G.popMax=opts.pop; G.rateMul=1.4; G.wonderTime=300; G.speed=1;
   const seed=opts.seed||((Math.random()*1e9)|0);
   G.seed=seed;
@@ -3468,30 +3643,49 @@ $('btnMap').onclick=(e)=>{e.stopPropagation();sfx('tap');$('mmWrap').classList.t
 /* ============================================================
    MAIN LOOP
    ============================================================ */
-let lastT=0, vicT=1;
+let lastT=0;
+const TICK=1/30;                 /* simulation runs at a fixed 30 Hz, frame rate independent */
+let acc=0;
+function simStep(){
+  G.tick++; G.time+=TICK;
+  rebuildHash();
+  for(let i=G.units.length-1;i>=0;i--){const u=G.units[i];if(u.alive)updateUnit(u,TICK);}
+  for(let i=G.blds.length-1;i>=0;i--){const b=G.blds[i];if(b.alive)updateBld(b,TICK);}
+  updateProjectiles(TICK); updateFx(TICK);
+  for(const p of G.players) if(p.ai&&p.alive&&p.brain) aiThink(p,TICK);
+  if(G.tick%7===0){ if(!G.demo)updateVision(G.human); updateFog(G.human); }
+  if(G.tick%30===0 && !G.demo) checkVictory();
+}
+/* A cheap FNV-1a over the simulation state. Two runs of the same seed must agree
+   tick for tick; this is also the check a lockstep peer would exchange to spot a
+   desync early. Positions are quantised so the hash is about state, not float noise. */
+function stateHash(){
+  let h=2166136261>>>0;
+  const mix=(v)=>{ h=(h^((v|0)&0xffffffff))>>>0; h=Math.imul(h,16777619)>>>0; };
+  mix(G.tick); mix(G.units.length); mix(G.blds.length); mix(G.res.length);
+  for(const u of G.units){ mix(u.id); mix(u.x*64); mix(u.y*64); mix(u.hp*4); mix(u.dir); mix(u.owner); }
+  for(const b of G.blds){ mix(b.id); mix(b.hp); mix(b.built*1024); mix(b.queue.length); }
+  for(const r of G.res){ mix(r.id); mix(r.amt*4); }
+  for(const p of G.players){ mix(p.res.f); mix(p.res.w); mix(p.res.g); mix(p.res.s); mix(p.age); mix(p.pop); }
+  return h>>>0;
+}
+function runTicks(n){ for(let i=0;i<n;i++) simStep(); return stateHash(); }
 function frame(t){
   requestAnimationFrame(frame);
-  const dtR=Math.min(.05,(t-(lastT||t))/1000); lastT=t;
+  const real=Math.min(.1,(t-(lastT||t))/1000); lastT=t;
   if(G.started&&!G.paused){
-    const dt=dtR*(G.demo?0.9:G.speed);
-    G.time+=dt;
-    rebuildHash();
-    for(let i=G.units.length-1;i>=0;i--){const u=G.units[i];if(u.alive)updateUnit(u,dt);}
-    for(let i=G.blds.length-1;i>=0;i--){const b=G.blds[i];if(b.alive)updateBld(b,dt);}
-    updateProjectiles(dt); updateFx(dt);
-    for(const p of G.players) if(p.ai&&p.alive&&p.brain) aiThink(p,dt);
-    if(G.demo){ /* the title map plays itself */ }
-    visT-=dtR;
-    if(visT<=0){ visT=.22; if(!G.demo){updateVision(G.human);} updateFog(G.human); }
-    vicT-=dtR;
-    if(vicT<=0){ vicT=1; if(!G.demo)checkVictory(); }
+    acc+=real*(G.demo?0.9:G.speed);
+    const cap=G.speed>2?48:5;              /* never spiral: drop time rather than stall */
+    let n=0;
+    while(acc>=TICK&&n<cap){ acc-=TICK; simStep(); n++; }
+    if(acc>TICK*cap)acc=0;
   }
-  if(G.demo){ cam.x+=dtR*.9; cam.y+=dtR*.45; if(cam.x>G.w-6||cam.y>G.h-6){cam.x=6;cam.y=6;} clampCam(); }
-  else edgePan(dtR);
-  draw(dtR);
-  mmT-=dtR; if(mmT<=0&&!G.demo){mmT=.1;drawMinimap();}
-  UI.hudT-=dtR; if(UI.hudT<=0&&!G.demo){UI.hudT=.12;refreshHUD(false);}
-  if(toastT>0){toastT-=dtR;if(toastT<=0)$('toast').classList.remove('on');}
+  if(G.demo){ cam.x+=real*.9; cam.y+=real*.45; if(cam.x>G.w-6||cam.y>G.h-6){cam.x=6;cam.y=6;} clampCam(); }
+  else edgePan(real);
+  draw(real);
+  mmT-=real; if(mmT<=0&&!G.demo){mmT=.1;drawMinimap();}
+  UI.hudT-=real; if(UI.hudT<=0&&!G.demo){UI.hudT=.12;refreshHUD(false);}
+  if(toastT>0){toastT-=real;if(toastT<=0)$('toast').classList.remove('on');}
 }
 /* ============================================================
    BOOT
