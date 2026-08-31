@@ -2251,7 +2251,8 @@ function draw(dt){
       if(t===TT.WATER||t===TT.SHALLOW) img=ART.water[(wf+((x*3+y*5)%6))%6];
       else img=ART.tiles[t][(hash2(x,y)*6)|0];
       ctx.drawImage(img,sx,sy,tw+1,th+1);
-      /* soft transitions with higher-priority neighbours */
+      /* soft transitions with higher-priority neighbours (not worth it zoomed out) */
+      if(z<0.62)continue;
       const pr=TT_PRIO[t];
       const nb=[[0,-1,0],[1,0,1],[0,1,2],[-1,0,3]];
       for(let k=0;k<4;k++){
@@ -2724,7 +2725,7 @@ cvs.addEventListener('pointerdown',(e)=>{
   else d.hold=setTimeout(()=>{
     if(INP.down!==d||d.moved>14||G.placing)return;
     INP.box={x0:d.x,y0:d.y,x1:d.x,y1:d.y,add:false};
-    if(navigator.vibrate)navigator.vibrate(12);
+    try{if(navigator.vibrate)navigator.vibrate(12);}catch(e){}
   },330);
 },{passive:false});
 cvs.addEventListener('pointermove',(e)=>{
