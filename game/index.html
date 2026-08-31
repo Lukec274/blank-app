@@ -311,9 +311,9 @@ function cv(w,h){const c=document.createElement('canvas');c.width=w;c.height=h;c
 const AGES = ['Dark Age','Feudal Age','Castle Age','Imperial Age'];
 const AGE_UP = [
   null,
-  {f:400, time:45, name:'Feudal Age'},
-  {f:700, g:200, time:65, name:'Castle Age'},
-  {f:950, g:650, time:95, name:'Imperial Age'}
+  {f:350, time:42, name:'Feudal Age'},
+  {f:650, g:180, time:60, name:'Castle Age'},
+  {f:900, g:600, time:90, name:'Imperial Age'}
 ];
 
 /* unit classes: vil, infantry, archer, cavalry, siege */
@@ -396,7 +396,7 @@ const SHORT={tc:'Town Ctr',house:'House',mill:'Mill',farm:'Farm',lumber:'Lumber'
 const RES_KEYS = ['f','w','g','s'];
 const RES_NAME = {f:'Food',w:'Wood',g:'Gold',s:'Stone'};
 const GATHER = {f:0.58, w:0.52, g:0.52, s:0.46};   // per second, per villager
-const CARRY = 12;
+const CARRY = 14;
 </script>
 <script>
 /* ============================================================
@@ -681,7 +681,10 @@ function drawFoot(x,look,frame,front,pc,s){
   const trous = look.w==='staff'? body : '#4c3b27';
   x.save(); x.translate(0,bob);
   /* legs */
-  if(look.w!=='staff'){
+  if(look.mount){
+    limb(x,1.4*s,-9.2*s,7.4*s,3.4*s,-.72,shade(trous,.92));
+    x.fillStyle='#3a2c1c';x.fillRect(5.6*s,-4.6*s,4.2*s,2*s);
+  } else if(look.w!=='staff'){
     limb(x,-2.2*s,-9.5*s,9.5*s,3.2*s, walk? ph*.42 : .05, shade(trous,.85));
     limb(x, 2.2*s,-9.5*s,9.5*s,3.2*s, walk? -ph*.42 : -.05, trous);
     x.fillStyle='#3a2c1c';
@@ -1858,7 +1861,7 @@ const knownAt=(p,x,y)=> p.explored[idx(x|0,y|0)]===1;
    ============================================================ */
 function newBrain(p,diff){
   return {p, diff, t:0, slow:0, wave:0, waveSize: diff==='easy'?5:(diff==='hard'?8:6),
-    attacking:false, army:[], nextAttack: diff==='easy'?300:(diff==='hard'?170:230),
+    attacking:false, army:[], nextAttack: diff==='easy'?430:(diff==='hard'?175:300),
     base:null, defend:0, buildQ:[], lastBuild:0, farmT:0};
 }
 const AI_MIX={
@@ -2087,7 +2090,7 @@ function aiThink(p,dt){
     if(tgt){
       br.wave++; br.nextAttack=(easy?150:hard?70:100); br.pushT=easy?60:120;
       for(const u of ready) cmdAttackMove([u],tgt.x+rndi(5)-2,tgt.y+rndi(5)-2);
-      if(G.human&&br.wave===1)pushAlert(p.name+' is mustering an army','warn');
+      if(G.human&&br.wave===1)pushAlert(p.name+' is marching on you — raise soldiers','warn',{x:tgt.x,y:tgt.y});
     }
   }
   /* an army mid-push keeps pushing; otherwise it drifts home */
@@ -2969,7 +2972,7 @@ function buildCommands(){
         act:()=>{const nx=st==='aggr'?'def':st==='def'?'pass':'aggr';cmdStance(fighters,nx);refreshHUD(true);toast('Stance: '+(nx==='aggr'?'Aggressive':nx==='def'?'Defensive':'Passive'));}});
     }
     cmds.push({icon:{g:'stop'},t:'Stop',act:()=>cmdStopAll()});
-    cmds.push({icon:{g:'idle'},t:'Idle Vil.',act:()=>cycleIdle()});
+    cmds.push({icon:{g:'idle'},t:'Idle',act:()=>cycleIdle()});
     cmds.push({icon:{g:'del'},t:'Delete',act:()=>{deleteSelected();sfx('deny');}});
     UI.cmds=cmds;return cmds;
   }
@@ -3012,7 +3015,7 @@ function buildCommands(){
     cmds.push({icon:{g:'del'},t:'Demolish',act:()=>{if(confirmDemolish(b))refreshHUD(true);}});
     UI.cmds=cmds;return cmds;
   }
-  cmds.push({icon:{g:'idle'},t:'Idle Vil.',act:()=>cycleIdle()});
+  cmds.push({icon:{g:'idle'},t:'Idle',act:()=>cycleIdle()});
   cmds.push({icon:{b:'tc'},t:'Town',act:()=>{const tc=G.blds.find(x2=>x2.owner===p.id&&x2.kind==='tc');if(tc){centerOn(tc.x,tc.y);selectEnt(tc,false);}}});
   cmds.push({icon:{g:'mil'},t:'Army',act:()=>{G.sel.clear();
     for(const u of G.units)if(u.owner===p.id&&u.kind!=='villager')G.sel.add(u.id);
@@ -3200,6 +3203,7 @@ function seedStart(p,pos,startRes){
 function newGame(opts){
   Object.assign(G,{units:[],blds:[],res:[],projs:[],fx:[],ents:new Map(),nextId:1,
     players:[],sel:new Set(),placing:null,time:0,over:false,started:false,paused:false});
+  G.demo=!!opts.demo;                       /* the title diorama, never inherited */
   G.popMax=opts.pop; G.rateMul=1.4; G.wonderTime=300; G.speed=1;
   const seed=opts.seed||((Math.random()*1e9)|0);
   G.seed=seed;
@@ -3237,9 +3241,8 @@ function newGame(opts){
   }
 }
 function startDemo(){
-  G.demo=true;
-  newGame({size:60,diff:'moderate',pop:75,res:200,players:2,seed:(Math.random()*1e9)|0});
-  G.demo=true; G.human.explored.fill(1);
+  newGame({size:60,diff:'moderate',pop:75,res:200,players:2,seed:(Math.random()*1e9)|0,demo:true});
+  G.human.explored.fill(1);
   $('alerts').innerHTML=''; $('toast').classList.remove('on'); $('banner').classList.remove('on');
   updateFog(G.human);
   document.querySelectorAll('.hud-el').forEach(e=>e.hidden=true);
@@ -3373,7 +3376,7 @@ function showSetup(){
   $('sStart').onclick=()=>{
     sfx('tap');
     menuEl.innerHTML=`<div class="sheet"><h1 style="font-size:22px">Forging the world…</h1></div>`;
-    setTimeout(()=>{ G.demo=false; newGame({...SETUP}); closeMenu(); },40);
+    setTimeout(()=>{ newGame({...SETUP}); closeMenu(); },40);
   };
 }
 function showHelp(back){
