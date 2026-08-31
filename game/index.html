@@ -1275,7 +1275,7 @@ function clearArea(tx,ty,r){
   }
 }
 function removeRes(r){
-  G.occ[idx(r.tx,r.ty)]=0; G.ents.delete(r.id);
+  G.occ[idx(r.tx,r.ty)]=0; G.occGen=(G.occGen||1)+1; G.ents.delete(r.id);
   const i=G.res.indexOf(r); if(i>=0)G.res.splice(i,1);
 }
 function ensureConnected(starts){
@@ -1348,7 +1348,8 @@ function hpop(){
     if(m===i)break; const tn=PF.heap[m],tk=PF.hk[m];PF.heap[m]=PF.heap[i];PF.hk[m]=PF.hk[i];PF.heap[i]=tn;PF.hk[i]=tk;i=m;}
   return top;
 }
-const DIRS=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,1.4142],[1,-1,1.4142],[-1,1,1.4142],[-1,-1,1.4142]];
+/* paired so d^1 is always the reverse step, which the flow field relies on */
+const DIRS=[[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,1.4142],[-1,-1,1.4142],[1,-1,1.4142],[-1,1,1.4142]];
 function passableFor(x,y,ignoreId){
   if(!inMap(x,y))return false;
   if(!TT_PASS[G.tile[idx(x,y)]])return false;
@@ -1402,6 +1403,66 @@ function simplify(path,ignoreId){
     out.push(path[j]); i=j;
   }
   return out;
+}
+/* ------------------------------------------------------------
+   Flow field. A* is right for one unit with its own goal, but a
+   group order makes every unit search the same map: sixty A*
+   runs in a single frame is a visible hitch. Instead we sweep a
+   Dijkstra integration field out from the shared goal once, bake
+   a direction per tile, and let the whole group read its local
+   arrow. One search serves any number of units.
+   ------------------------------------------------------------ */
+const FLOW={cost:null,heap:null,key:null,n:0,cache:[]};
+function flowInit(){
+  const N=G.w*G.h;
+  FLOW.cost=new Uint16Array(N); FLOW.heap=new Int32Array(N+1); FLOW.key=new Uint16Array(N+1);
+  FLOW.cache=[];
+}
+function fpush(node,k){
+  let i=++FLOW.n; FLOW.heap[i]=node; FLOW.key[i]=k;
+  while(i>1){const p=i>>1; if(FLOW.key[p]<=FLOW.key[i])break;
+    const tn=FLOW.heap[p],tk=FLOW.key[p];FLOW.heap[p]=FLOW.heap[i];FLOW.key[p]=FLOW.key[i];
+    FLOW.heap[i]=tn;FLOW.key[i]=tk;i=p;}
+}
+function fpop(){
+  const top=FLOW.heap[1];FLOW.heap[1]=FLOW.heap[FLOW.n];FLOW.key[1]=FLOW.key[FLOW.n];FLOW.n--;
+  let i=1;for(;;){let l=i<<1,r=l+1,m=i;
+    if(l<=FLOW.n&&FLOW.key[l]<FLOW.key[m])m=l; if(r<=FLOW.n&&FLOW.key[r]<FLOW.key[m])m=r;
+    if(m===i)break;
+    const tn=FLOW.heap[m],tk=FLOW.key[m];FLOW.heap[m]=FLOW.heap[i];FLOW.key[m]=FLOW.key[i];
+    FLOW.heap[i]=tn;FLOW.key[i]=tk;i=m;}
+  return top;
+}
+function buildFlow(gx,gy){
+  gx|=0; gy|=0;
+  if(!inMap(gx,gy))return null;
+  for(const f of FLOW.cache) if(f.gx===gx&&f.gy===gy&&f.gen===G.occGen) return f;
+  const goal=nearestOpen(gx,gy,0,8); if(!goal)return null;
+  const N=G.w*G.h, cost=FLOW.cost, dir=new Uint8Array(N);
+  cost.fill(65535); dir.fill(8);
+  FLOW.n=0;
+  const g0=idx(goal.x,goal.y); cost[g0]=0; fpush(g0,0);
+  while(FLOW.n>0){
+    const cur=fpop(), cx=cur%G.w, cy=(cur/G.w)|0, cc=cost[cur];
+    for(let d=0;d<8;d++){
+      const nx=cx+DIRS[d][0], ny=cy+DIRS[d][1];
+      if(!passableFor(nx,ny,0))continue;
+      if(DIRS[d][2]>1&&(!passableFor(cx+DIRS[d][0],cy,0)||!passableFor(cx,cy+DIRS[d][1],0)))continue;
+      const ni=idx(nx,ny), nc=cc+(DIRS[d][2]>1?14:10);
+      if(nc>=cost[ni])continue;
+      cost[ni]=nc;
+      dir[ni]=(d^1);                       /* step back toward the goal */
+      fpush(ni,nc);
+    }
+  }
+  const field={gx,gy,dir,goal,gen:G.occGen,made:G.tick};
+  FLOW.cache.push(field); if(FLOW.cache.length>3)FLOW.cache.shift();
+  return field;
+}
+function flowStep(f,x,y){
+  const i=idx(x|0,y|0), d=f.dir[i];
+  if(d>=8)return null;
+  return DIRS[d];
 }
 /* nearest free tile around a blocked target */
 function nearestOpen(tx,ty,ignoreId,maxR){
@@ -1477,6 +1538,7 @@ function placeBld(kind,tx,ty,owner,instant){
     food:B.farm? (B.farm+G.players[owner].mod.farm) : 0, stage:0};
   G.blds.push(b);G.ents.set(b.id,b);
   for(const [x,y] of bldCells(b)) G.occ[idx(x,y)]=b.id;
+  G.occGen=(G.occGen||1)+1;
   if(B.landmark)pl.landmarks.push(b);
   const p=pl;
   if(instant&&B.pop)p.popCap=Math.min(p.popMax,p.popCap+B.pop);
@@ -1505,6 +1567,7 @@ function killEnt(e){
     const B=BLD[e.kind];
     if(B.pop&&e.built>=1)p.popCap=Math.max(0,p.popCap-B.pop);
     for(const [x,y] of bldCells(e)) if(G.occ[idx(x,y)]===e.id)G.occ[idx(x,y)]=0;
+    G.occGen=(G.occGen||1)+1;
     G.fx.push({k:'rubble',x:e.x,y:e.y,size:e.size,t:0,life:60});
     const i=G.blds.indexOf(e);if(i>=0)G.blds.splice(i,1);
     G.sel.delete(e.id);
@@ -1653,14 +1716,24 @@ function moveTo(u,x,y,adjTo){
   if(!p||!p.length){ u.path=null; return false; }
   u.path=p; u.pi=0; u.repathT=0; return true;
 }
-function stopUnit(u){u.path=null;u.task=null;u.target=null;u.amove=null;u.state='idle';}
+function stopUnit(u){u.path=null;u.flow=null;u.task=null;u.target=null;u.amove=null;u.state='idle';}
 /* ---------- commands ---------- */
+function groupOrder(units,x,y,taskKind){
+  const f=buildFlow(x,y);
+  if(!f)return false;
+  for(const u of units){
+    u.task={kind:taskKind,x,y}; u.target=null; u.path=null; u.pi=0;
+    u.flow=f; u.flowGoal={x,y}; u.stuck=0; u.state='move';
+  }
+  return true;
+}
 function cmdMove(units,x,y){
   let n=0;
+  if(units.length>=6 && groupOrder(units,x,y,'move')) return units.length;
   const spread=Math.ceil(Math.sqrt(units.length));
   units.forEach((u,i)=>{
     const ox=x+((i%spread)-spread/2)*0.9, oy=y+(((i/spread)|0)-spread/2)*0.9;
-    u.task={kind:'move'}; u.target=null;
+    u.task={kind:'move'}; u.target=null; u.flow=null;
     if(moveTo(u,ox,oy))n++; else if(moveTo(u,x,y))n++;
     u.state='move';
   });
@@ -1670,25 +1743,27 @@ function cmdAttack(units,tgt){
   for(const u of units){
     if(u.kind==='monk'){ if(tgt.owner===u.owner&&tgt.hp<tgt.maxHp){u.task={kind:'heal'};u.target=tgt;} continue; }
     if(u.kind==='villager'&&tgt.type==='b'&&tgt.owner===u.owner){cmdRepair([u],tgt);continue;}
-    u.task={kind:'attack'};u.target=tgt;u.state='attack';u.path=null;
+    u.task={kind:'attack'};u.target=tgt;u.state='attack';u.path=null;u.flow=null;
   }
 }
 function cmdGather(units,r){
   for(const u of units){
     if(u.kind!=='villager')continue;
-    u.task={kind:'gather'};u.target=r;u.state='gather';u.path=null;
+    u.task={kind:'gather'};u.target=r;u.state='gather';u.path=null;u.flow=null;
   }
 }
 function cmdBuildAt(units,b){
   for(const u of units){ if(u.kind!=='villager')continue;
-    u.task={kind:'build'};u.target=b;u.state='build';u.path=null; }
+    u.task={kind:'build'};u.target=b;u.state='build';u.path=null;u.flow=null; }
 }
 function cmdRepair(units,b){
   for(const u of units){ if(u.kind!=='villager')continue;
     u.task={kind:'repair'};u.target=b;u.state='build';u.path=null; }
 }
 function cmdAttackMove(units,x,y){
-  for(const u of units){ u.task={kind:'amove',x,y}; u.target=null; u.amove=null; moveTo(u,x,y); u.state='move'; }
+  if(units.length>=6 && groupOrder(units,x,y,'amove')){ for(const u of units)u.amove=null; return; }
+  for(const u of units){ u.task={kind:'amove',x,y}; u.target=null; u.amove=null; u.flow=null;
+    moveTo(u,x,y); u.state='move'; }
 }
 function cmdStance(units,s){for(const u of units)u.stance=s;}
 
@@ -1843,17 +1918,40 @@ const DIR_CANON=[0,1,2,1,0,3,4,3];      /* facing -> pose the atlas actually sto
 const DIR_FLIP =[1,1,0,0,0,0,0,1];      /* facing -> draw mirrored */
 const CANON_PROFILE=[1,.75,.25,.75,.25];/* how side-on the pose is */
 function moveAlong(u,dt){
+  if(u.flow){
+    const gx=u.flowGoal.x, gy=u.flowGoal.y, dg=dist(u.x,u.y,gx,gy);
+    if(dg<1.1){ u.flow=null; u.path=null;
+      if(u.task&&(u.task.kind==='move'||u.task.kind==='amove'))u.task=null;
+      u.state='idle'; animIdle(u,dt); return; }
+    let step=dg<2.5? [gx-u.x,gy-u.y] : null;
+    if(!step){ const d=flowStep(u.flow,u.x,u.y); step=d?[d[0],d[1]]:null; }
+    if(!step){                       /* off the field: fall back to a private search */
+      u.flow=null; if(!moveTo(u,gx,gy)){ u.task=null; u.state='idle'; }
+      animIdle(u,dt); return;
+    }
+    const L=Math.hypot(step[0],step[1])||1;
+    const before=u.x+u.y;
+    stepUnit(u,step[0]/L,step[1]/L,dt);
+    if(Math.abs((u.x+u.y)-before)<0.004){        /* wedged: re-plan for this one unit */
+      u.stuck=(u.stuck||0)+dt;
+      if(u.stuck>1.2){ u.flow=null; u.stuck=0; moveTo(u,gx,gy); }
+    } else u.stuck=0;
+    return;
+  }
   if(!u.path||u.pi>=u.path.length){
     if(u.path&&u.pi>=u.path.length){u.path=null;if(u.task&&(u.task.kind==='move'))u.task=null;}
     if(u.state==='move')u.state='idle';
     animIdle(u,dt); return;
   }
   const wp=u.path[u.pi];
-  const spd=u.st.spd*G.rateMul*((u.auraT>G.time)?u.auraSpd:1);
   let dx=wp.x-u.x, dy=wp.y-u.y, dd=Math.hypot(dx,dy);
   if(dd<0.14){ u.pi++; if(u.pi>=u.path.length){u.path=null;} animIdle(u,dt); return; }
   dx/=dd;dy/=dd;
-  /* local separation so crowds don't stack */
+  stepUnit(u,dx,dy,dt);
+}
+/* one step of steering: desired direction plus crowd separation */
+function stepUnit(u,dx,dy,dt){
+  const spd=u.st.spd*G.rateMul*((u.auraT>G.time)?u.auraSpd:1);
   let sx=0,sy=0;
   forNear(u.x,u.y,1.1,(o)=>{
     if(o===u||!o.alive)return;
@@ -3586,12 +3684,12 @@ function newGame(opts){
   Object.assign(G,{units:[],blds:[],res:[],projs:[],fx:[],ents:new Map(),nextId:1,
     players:[],sel:new Set(),placing:null,time:0,over:false,started:false,paused:false});
   G.demo=!!opts.demo;                       /* the title diorama, never inherited */
-  G.tick=0; acc=0;
+  G.tick=0; acc=0; G.occGen=1;
   G.popMax=opts.pop; G.rateMul=1.4; G.wonderTime=300; G.speed=1;
   const seed=opts.seed||((Math.random()*1e9)|0);
   G.seed=seed;
   const nf=genMap(opts.size,seed);
-  pfInit();
+  pfInit(); flowInit();
   scatterWorld(nf.forest);
   const startRes={f:opts.res,w:opts.res,g:Math.round(opts.res*.5),s:Math.round(opts.res*.5)};
   const nP=opts.players||2;
@@ -3668,7 +3766,7 @@ function loadGame(){
     placing:null,over:false,paused:false,started:false});
   G.w=d.w;G.h=d.h;G.seed=d.seed;G.time=d.time;G.popMax=d.popMax;G.rateMul=d.rate||1.4;G.wonderTime=300;G.speed=1;
   G.tile=unb64(d.tile); G.occ=new Int32Array(G.w*G.h); G.nextId=d.nextId;
-  pfInit();
+  G.occGen=1; pfInit(); flowInit();
   for(const pd of d.players){
     const p=newPlayer(pd.id,pd.name,pd.ai,pd.ci,pd.civ||'free');
     (CIVS[p.civ]||CIVS.free).mod(p);
