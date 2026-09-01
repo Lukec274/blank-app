@@ -129,17 +129,25 @@ function makeHorse(col,dark){
   return g;
 }
 window.__bake=async function(cfg){
-  const gltf=await load('./glb/mesh.glb');
+  /* cfg.mesh lets a generated model (e.g. from Meshy) stand in for the stock
+     mannequin; if that file carries its own animations they are used as-is. */
+  const gltf=await load(cfg.mesh? ('./glb/'+cfg.mesh) : './glb/mesh.glb');
   const root=gltf.scene;
   const clips={};
-  for(const f of cfg.animFiles){
+  for(const c of (gltf.animations||[])) clips[c.name]=c;
+  for(const f of (cfg.animFiles||[])){
     const a=await load('./glb/anim_'+f+'.glb');
     for(const c of a.animations) clips[c.name]=c;
   }
+  if(cfg.clipMap){ for(const k in cfg.clipMap){ if(clips[cfg.clipMap[k]]) clips[k]=clips[cfg.clipMap[k]]; } }
+  window.__clips=Object.keys(clips);
   scene.add(root);
   root.updateMatrixWorld(true);
   /* per-part materials so the tunic can carry the player colour */
   const partMat={Body:'team',Head:'skin',ArmLeft:'skin',ArmRight:'skin',LegLeft:'cloth',LegRight:'cloth'};
+  if(cfg.keepMaterials){
+    root.traverse(o=>{ if(o.isMesh||o.isSkinnedMesh)o.frustumCulled=false; });
+  } else
   root.traverse(o=>{
     if(!o.isMesh&&!o.isSkinnedMesh)return;
     const n=(o.name.split('_').pop()||'');
