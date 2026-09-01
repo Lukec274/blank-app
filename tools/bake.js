@@ -40,6 +40,19 @@ const UNITS={
     states:[{name:'idle',clip:'Sit_Chair_Idle',n:2},{name:'walk',clip:'Sit_Chair_Idle',n:6},
             {name:'attack',clip:'Melee_2H_Attack_Stab',n:5},S.die]},
 };
+/* Generated models (Meshy or otherwise) live in the repo at tools/glb/ so they
+   survive the container; the render page serves from /tmp/bake/glb, so stage
+   them across before launching. Repo files win over anything already there. */
+const SRC=path.join(__dirname,'glb'), DST='/tmp/bake/glb';
+if(fs.existsSync(SRC)){
+  fs.mkdirSync(DST,{recursive:true});
+  for(const f of fs.readdirSync(SRC)){
+    if(!f.endsWith('.glb'))continue;
+    fs.copyFileSync(path.join(SRC,f),path.join(DST,f));
+    console.log('staged',f);
+  }
+}
+
 const srv=http.createServer((q,s)=>{
   let f=path.join('/tmp/bake',decodeURIComponent(q.url.split('?')[0]));
   if(q.url==='/')f='/tmp/bake/bake.html';
@@ -54,7 +67,9 @@ const srv=http.createServer((q,s)=>{
   await page.goto('http://127.0.0.1:8799/');
   await page.waitForFunction(()=>window.__ready,{timeout:30000});
   const only=process.argv[2];
-  const manifest={};
+  /* a single-unit bake must not drop the other units out of the manifest */
+  const MF=path.join(OUT,'units.json');
+  const manifest=fs.existsSync(MF)?JSON.parse(fs.readFileSync(MF,'utf8')):{};
   for(const [name,cfg] of Object.entries(UNITS)){
     if(only&&name!==only)continue;
     const r=await page.evaluate((c)=>window.__bake(c),{...cfg,animFiles:A});

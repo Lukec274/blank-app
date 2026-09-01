@@ -1,0 +1,16 @@
+# Generated models
+
+Drop `.glb` files here. `tools/bake.js` copies everything in this folder into
+`/tmp/bake/glb/` before it launches the renderer, so a model landing here is one
+command away from being baked:
+
+```bash
+node tools/bake.js villager      # bake a single unit
+```
+
+The name in the folder must match the `mesh:` field of that unit's entry in the
+`UNITS` table at the top of `tools/bake.js`.
+
+`/tmp` does not survive the container being reclaimed, and neither do the source
+animation packs. This folder does. Generated models cost credits, so commit them
+once they are good rather than regenerating.
