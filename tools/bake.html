@@ -1,0 +1,245 @@
+<canvas id="c"></canvas>
+<script type="importmap">{"imports":{"three":"./three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from './GLTFLoader.js';
+
+const FW=72, FH=82;                        // frame box — sized so a unit is ~46px, matching game zoom 1
+const loader=new GLTFLoader();
+const load=(u)=>new Promise((res,rej)=>loader.load(u,res,undefined,rej));
+
+const renderer=new THREE.WebGLRenderer({canvas:document.getElementById('c'),alpha:true,antialias:true});
+renderer.setSize(FW,FH,false);
+renderer.setClearColor(0x000000,0);
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+
+const scene=new THREE.Scene();
+/* 2:1 dimetric — yaw 45°, pitch 30° — matches 64x32 tiles exactly */
+const cam=new THREE.OrthographicCamera(-1,1,1,-1,0.01,100);
+const YAW=Math.PI/4, PITCH=30*Math.PI/180;
+function placeCam(radius,centerY){
+  const d=12;
+  cam.position.set(Math.sin(YAW)*Math.cos(PITCH)*d, Math.sin(PITCH)*d, Math.cos(YAW)*Math.cos(PITCH)*d);
+  cam.lookAt(0,centerY,0);
+  const h=radius;
+  cam.left=-h*(FW/FH); cam.right=h*(FW/FH); cam.top=h; cam.bottom=-h;
+  cam.updateProjectionMatrix();
+}
+/* light: warm key from the camera's left, cool fill, soft ambient — reads at 30px */
+const key=new THREE.DirectionalLight(0xfff0d8,2.1); key.position.set(-4,7,5); scene.add(key);
+const fill=new THREE.DirectionalLight(0x9ab4d8,0.75); fill.position.set(5,2,-4); scene.add(fill);
+const rim=new THREE.DirectionalLight(0xffffff,0.7); rim.position.set(2,4,-6); scene.add(rim);
+scene.add(new THREE.AmbientLight(0xb9c4d0,0.85));
+
+const TEAM=0xff00ff;                        // keyed, recoloured per player at load
+const MATS={
+  team:  new THREE.MeshLambertMaterial({color:TEAM}),
+  skin:  new THREE.MeshLambertMaterial({color:0xd8a878}),
+  cloth: new THREE.MeshLambertMaterial({color:0x6b563c}),
+  leather:new THREE.MeshLambertMaterial({color:0x4e3a24}),
+  steel: new THREE.MeshLambertMaterial({color:0xb9bec8}),
+  dark:  new THREE.MeshLambertMaterial({color:0x3a2f24}),
+  wood:  new THREE.MeshLambertMaterial({color:0x7a5732}),
+  gold:  new THREE.MeshLambertMaterial({color:0xd8a13a}),
+  robe:  new THREE.MeshLambertMaterial({color:0xe8e0cc}),
+};
+function box(w,h,d,m){return new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);}
+function cyl(r,h,m,seg){return new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,seg||8),m);}
+
+/* weapons, built from primitives and parented to the hand bone */
+function makeWeapon(kind){
+  const g=new THREE.Group();
+  if(kind==='sword'){
+    const b=box(.022,.30,.05,MATS.steel); b.position.y=.16; g.add(b);
+    const cg=box(.09,.025,.035,MATS.gold); cg.position.y=.02; g.add(cg);
+    const h=cyl(.018,.08,MATS.leather); h.position.y=-.03; g.add(h);
+  } else if(kind==='axe'){
+    const s=cyl(.016,.30,MATS.wood); s.position.y=.10; g.add(s);
+    const hd=box(.10,.09,.03,MATS.steel); hd.position.set(.05,.23,0); g.add(hd);
+  } else if(kind==='spear'){
+    const s=cyl(.014,.62,MATS.wood); s.position.y=.16; g.add(s);
+    const t=new THREE.Mesh(new THREE.ConeGeometry(.032,.10,8),MATS.steel); t.position.y=.50; g.add(t);
+  } else if(kind==='pick'){
+    const s=cyl(.016,.28,MATS.wood); s.position.y=.09; g.add(s);
+    const hd=box(.16,.028,.028,MATS.steel); hd.position.y=.22; hd.rotation.z=.25; g.add(hd);
+  } else if(kind==='hammer'){
+    const s=cyl(.016,.24,MATS.wood); s.position.y=.07; g.add(s);
+    const hd=box(.07,.06,.06,MATS.steel); hd.position.y=.19; g.add(hd);
+  } else if(kind==='bow'){
+    const arc=new THREE.Mesh(new THREE.TorusGeometry(.17,.014,6,14,Math.PI*1.15),MATS.wood);
+    arc.rotation.z=Math.PI/2+Math.PI*0.075; arc.rotation.y=Math.PI/2; g.add(arc);
+    const str=cyl(.004,.33,MATS.robe,4); str.position.z=-.01; g.add(str);
+  } else if(kind==='staff'){
+    const s=cyl(.015,.52,MATS.wood); s.position.y=.15; g.add(s);
+    const o=new THREE.Mesh(new THREE.SphereGeometry(.035,8,6),MATS.gold); o.position.y=.42; g.add(o);
+  }
+  return g;
+}
+function makeShield(kind){
+  const g=new THREE.Group();
+  const big = kind==='pavise';
+  const w=big?.20:.17, h=big?.30:.21;
+  const b=box(.03,h,w,MATS.team); g.add(b);
+  const r=box(.018,h*1.1,w*1.1,MATS.dark); r.position.x=-.016; g.add(r);
+  const boss=new THREE.Mesh(new THREE.SphereGeometry(.028,8,6),MATS.gold); boss.position.x=.022; g.add(boss);
+  return g;
+}
+function makeHat(kind){
+  const g=new THREE.Group();
+  if(kind==='helm'){
+    const h=new THREE.Mesh(new THREE.SphereGeometry(.105,10,8,0,Math.PI*2,0,Math.PI*0.62),MATS.steel);
+    h.position.y=.02; g.add(h);
+    const b=cyl(.108,.03,MATS.steel,10); b.position.y=-.01; g.add(b);
+  } else if(kind==='helmPlume'){
+    const h=new THREE.Mesh(new THREE.SphereGeometry(.108,10,8,0,Math.PI*2,0,Math.PI*0.62),MATS.steel);
+    h.position.y=.02; g.add(h);
+    const p=box(.03,.10,.13,MATS.team); p.position.y=.10; g.add(p);
+  } else if(kind==='cap'){
+    const h=new THREE.Mesh(new THREE.SphereGeometry(.10,8,6,0,Math.PI*2,0,Math.PI*0.55),MATS.cloth);
+    h.position.y=.02; g.add(h);
+  } else if(kind==='hood'){
+    const h=new THREE.Mesh(new THREE.SphereGeometry(.115,8,7,0,Math.PI*2,0,Math.PI*0.7),MATS.robe);
+    h.position.y=.01; g.add(h);
+  }
+  return g;
+}
+function makeHorse(col,dark){
+  const M=new THREE.MeshLambertMaterial({color:col});
+  const D=new THREE.MeshLambertMaterial({color:dark||0x000000});
+  const g=new THREE.Group(), legs=[];
+  const body=box(.52,.42,1.05,M); body.position.y=.98; g.add(body);
+  const chest=box(.50,.44,.34,M); chest.position.set(0,1.02,.42); g.add(chest);
+  const rump=box(.48,.44,.30,M); rump.position.set(0,1.00,-.44); g.add(rump);
+  const neck=box(.28,.52,.30,M); neck.position.set(0,1.32,.52); neck.rotation.x=-.42; g.add(neck);
+  const head=box(.24,.24,.46,M); head.position.set(0,1.56,.80); head.rotation.x=.30; g.add(head);
+  const muzzle=box(.20,.17,.18,D); muzzle.position.set(0,1.50,1.00); g.add(muzzle);
+  for(const sx of [-1,1]){
+    const ear=box(.07,.14,.06,M); ear.position.set(sx*.09,1.70,.68); g.add(ear);
+  }
+  const mane=box(.10,.20,.62,D); mane.position.set(0,1.46,.46); mane.rotation.x=-.42; g.add(mane);
+  const tail=box(.10,.42,.10,D); tail.position.set(0,1.02,-.62); tail.rotation.x=.5; g.add(tail);
+  for(const [sx,sz] of [[-1,1],[1,1],[-1,-1],[1,-1]]){
+    const hip=new THREE.Group(); hip.position.set(sx*.20,.86,sz*.36); g.add(hip);
+    const up=box(.16,.44,.18,M); up.position.y=-.22; hip.add(up);
+    const lo=box(.13,.44,.15,M); lo.position.y=-.62; hip.add(lo);
+    const hoof=box(.15,.10,.17,D); hoof.position.y=-.86; hip.add(hoof);
+    legs.push({hip,phase:(sz>0?0:Math.PI)+(sx>0?Math.PI:0)});
+  }
+  g.userData.legs=legs;
+  return g;
+}
+window.__bake=async function(cfg){
+  const gltf=await load('./glb/mesh.glb');
+  const root=gltf.scene;
+  const clips={};
+  for(const f of cfg.animFiles){
+    const a=await load('./glb/anim_'+f+'.glb');
+    for(const c of a.animations) clips[c.name]=c;
+  }
+  scene.add(root);
+  root.updateMatrixWorld(true);
+  /* per-part materials so the tunic can carry the player colour */
+  const partMat={Body:'team',Head:'skin',ArmLeft:'skin',ArmRight:'skin',LegLeft:'cloth',LegRight:'cloth'};
+  root.traverse(o=>{
+    if(!o.isMesh&&!o.isSkinnedMesh)return;
+    const n=(o.name.split('_').pop()||'');
+    const key=(cfg.parts&&cfg.parts[n])||partMat[n]||'cloth';
+    o.material=MATS[key]; o.frustumCulled=false;
+  });
+  const box0=new THREE.Box3().setFromObject(root);
+  const BH=box0.max.y-box0.min.y;              /* body height in world units */
+  const S=BH*0.95;                              /* everything attached scales with the body */
+  const bones={};
+  root.traverse(o=>{ if(o.isBone||/^(hand|head|chest|hips)/.test(o.name))bones[o.name]=o; });
+  window.__bones=Object.keys(bones);
+  const B=(n)=>bones[n]||bones[n.replace('.','_')]||bones[n.replace('.','')];
+  if(cfg.weapon&&B('hand.r')){
+    const w=makeWeapon(cfg.weapon);
+    w.scale.setScalar(S*1.15);
+    w.position.set(0,.02*S,0);
+    w.rotation.set(cfg.wrot?cfg.wrot[0]:0, cfg.wrot?cfg.wrot[1]:0, cfg.wrot?cfg.wrot[2]:0);
+    B('hand.r').add(w);
+  }
+  if(cfg.shield&&B('hand.l')){
+    const sh=makeShield(cfg.shield);
+    sh.scale.setScalar(S);
+    sh.rotation.set(0,0,0); sh.position.set(.05*S,.03*S,0);
+    B('hand.l').add(sh);
+  }
+  if(cfg.debugFacing&&B('chest')){
+    const g=new THREE.Group();
+    const c=new THREE.Mesh(new THREE.ConeGeometry(.10,.42,8),new THREE.MeshBasicMaterial({color:0xff2020}));
+    c.rotation.x=Math.PI/2; c.position.z=.34; g.add(c);          /* points along the model's local +Z */
+    const up=new THREE.Mesh(new THREE.ConeGeometry(.07,.30,8),new THREE.MeshBasicMaterial({color:0x20ff20}));
+    up.position.y=.40; g.add(up);
+    g.scale.setScalar(S); B('chest').add(g);
+  }
+  if(cfg.hat&&B('head')){ const h=makeHat(cfg.hat); h.scale.setScalar(S*1.55); h.position.y=.20*S; B('head').add(h); }
+
+  let horse=null, rider=root;
+  if(cfg.mount){
+    horse=makeHorse(cfg.mount.col, cfg.mount.dark);
+    const HS=BH*0.74; horse.scale.setScalar(HS);
+    scene.add(horse);
+    /* seat the rider: hips at the saddle, legs already bent by the sitting clip */
+    root.position.set(0, HS*1.16, -HS*0.05);
+    root.scale.setScalar(0.86);
+    const cap=box(.46,.07,.66,MATS.team); cap.position.y=1.21; horse.add(cap);
+  }
+  const mixer=new THREE.AnimationMixer(root);
+  const box3=box0;                    /* body only: weapons must not change the framing */
+  const height=box3.max.y-box3.min.y;
+  const cy=box3.min.y+height*(cfg.mount?0.60:0.46);
+  placeCam(height*(cfg.mount?1.02:0.80)*(cfg.zoom||1), cy);
+  cam.updateMatrixWorld(true);
+  /* where the feet land in the frame — the game anchors sprites here */
+  const o=new THREE.Vector3(0,box3.min.y,0).project(cam);
+  const anchor={x:(o.x*0.5+0.5)*FW, y:(-o.y*0.5+0.5)*FH};
+
+  /* lay every state out on one sheet: rows = facing, cols = frame */
+  const states=cfg.states;
+  const total=states.reduce((a,s)=>a+s.n,0);
+  const sheet=document.createElement('canvas');
+  sheet.width=FW*total; sheet.height=FH*5;
+  const sx=sheet.getContext('2d');
+  const YAWS=[45,90,135,180,225];   /* S, SE, E, NE, N — the other three are mirrors */
+  let col=0;
+  const layout=[];
+  for(const st of states){
+    const clip=clips[st.clip];
+    if(!clip){ layout.push({name:st.name,start:col,n:st.n,missing:true}); col+=st.n; continue; }
+    const action=mixer.clipAction(clip);
+    action.reset(); action.play();
+    layout.push({name:st.name,start:col,n:st.n,dur:+clip.duration.toFixed(2)});
+    for(let f=0;f<st.n;f++){
+      const t=(st.from||0)+((st.to!=null?st.to:1)-(st.from||0))*(st.n===1?0.5:f/st.n)*clip.duration;
+      const gait=(st.name==='walk')? (f/st.n)*Math.PI*2 : 0;
+      if(horse){
+        for(const L of horse.userData.legs) L.hip.rotation.x=Math.sin(gait+L.phase)*(st.name==='walk'?0.55:0.05);
+        horse.position.y=(st.name==='walk')?Math.abs(Math.sin(gait))*BH*0.02:0;
+      }
+      for(let d=0;d<5;d++){
+        const yaw=(YAWS[d]+(cfg.yawOffset||0))*Math.PI/180;
+        root.rotation.y=yaw;
+        if(horse)horse.rotation.y=yaw;
+        mixer.setTime(0); mixer.setTime(t);
+        root.updateMatrixWorld(true);
+        renderer.render(scene,cam);
+        sx.drawImage(renderer.domElement,(col+f)*FW,d*FH);
+      }
+    }
+    action.stop();
+    col+=st.n;
+  }
+  scene.remove(root);
+  const hb=B('hand.r'); const hw=new THREE.Vector3(), hs=new THREE.Vector3();
+  if(hb){hb.getWorldPosition(hw);hb.getWorldScale(hs);}
+  window.__diag={bbox:[box3.min.x,box3.min.y,box3.min.z,box3.max.x,box3.max.y,box3.max.z].map(v=>+v.toFixed(3)),
+    rootPos:[root.position.x,root.position.y,root.position.z], rootScale:[root.scale.x,root.scale.y,root.scale.z],
+    handWorld:[+hw.x.toFixed(3),+hw.y.toFixed(3),+hw.z.toFixed(3)], handScale:[+hs.x.toFixed(4),+hs.y.toFixed(4),+hs.z.toFixed(4)],
+    camPos:[+cam.position.x.toFixed(2),+cam.position.y.toFixed(2),+cam.position.z.toFixed(2)], frust:[cam.left,cam.right,cam.top,cam.bottom]};
+  return {png:sheet.toDataURL('image/png'),layout,frames:total,fw:FW,fh:FH,anchor,diag:window.__diag,
+    bones:window.__bones.slice(0,30)};
+};
+window.__ready=true;
+</script>

@@ -1,0 +1,405 @@
+{
+ "villager": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 33,
+  "anchor": {
+   "x": 36,
+   "y": 62.25
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2,
+    "dur": 1.07
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6,
+    "dur": 1.07
+   },
+   {
+    "name": "attack",
+    "start": 8,
+    "n": 5,
+    "dur": 1.33
+   },
+   {
+    "name": "work",
+    "start": 13,
+    "n": 5,
+    "dur": 1.33
+   },
+   {
+    "name": "mine",
+    "start": 18,
+    "n": 5,
+    "dur": 3.73
+   },
+   {
+    "name": "build",
+    "start": 23,
+    "n": 5,
+    "dur": 2.67
+   },
+   {
+    "name": "die",
+    "start": 28,
+    "n": 5,
+    "dur": 0.8
+   }
+  ]
+ },
+ "militia": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 18,
+  "anchor": {
+   "x": 36,
+   "y": 62.25
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2,
+    "dur": 1.07
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6,
+    "dur": 1.07
+   },
+   {
+    "name": "attack",
+    "start": 8,
+    "n": 5,
+    "dur": 1
+   },
+   {
+    "name": "die",
+    "start": 13,
+    "n": 5,
+    "dur": 0.8
+   }
+  ]
+ },
+ "spearman": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 18,
+  "anchor": {
+   "x": 36,
+   "y": 62.25
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2,
+    "dur": 1.07
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6,
+    "dur": 1.07
+   },
+   {
+    "name": "attack",
+    "start": 8,
+    "n": 5,
+    "dur": 1.6
+   },
+   {
+    "name": "die",
+    "start": 13,
+    "n": 5,
+    "dur": 0.8
+   }
+  ]
+ },
+ "archer": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 18,
+  "anchor": {
+   "x": 36,
+   "y": 62.25
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2,
+    "dur": 1.57
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6,
+    "dur": 0.8
+   },
+   {
+    "name": "attack",
+    "start": 8,
+    "n": 5,
+    "dur": 1.33
+   },
+   {
+    "name": "die",
+    "start": 13,
+    "n": 5,
+    "dur": 0.8
+   }
+  ]
+ },
+ "skirmisher": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 18,
+  "anchor": {
+   "x": 36,
+   "y": 62.25
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2,
+    "dur": 1.07
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6,
+    "dur": 1.07
+   },
+   {
+    "name": "attack",
+    "start": 8,
+    "n": 5,
+    "dur": 1.37
+   },
+   {
+    "name": "die",
+    "start": 13,
+    "n": 5,
+    "dur": 0.8
+   }
+  ]
+ },
+ "pavise": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 18,
+  "anchor": {
+   "x": 36,
+   "y": 62.25
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2,
+    "dur": 1.07
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6,
+    "dur": 1.07
+   },
+   {
+    "name": "attack",
+    "start": 8,
+    "n": 5,
+    "dur": 1.07
+   },
+   {
+    "name": "die",
+    "start": 13,
+    "n": 5,
+    "dur": 0.8
+   }
+  ]
+ },
+ "monk": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 18,
+  "anchor": {
+   "x": 36,
+   "y": 62.25
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2,
+    "dur": 1.07
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6,
+    "dur": 1.07
+   },
+   {
+    "name": "attack",
+    "start": 8,
+    "n": 5,
+    "dur": 0.93
+   },
+   {
+    "name": "die",
+    "start": 13,
+    "n": 5,
+    "dur": 0.8
+   }
+  ]
+ },
+ "scout": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 18,
+  "anchor": {
+   "x": 36,
+   "y": 62.99
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2,
+    "dur": 3.6
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6,
+    "dur": 3.6
+   },
+   {
+    "name": "attack",
+    "start": 8,
+    "n": 5,
+    "dur": 1
+   },
+   {
+    "name": "die",
+    "start": 13,
+    "n": 5,
+    "dur": 0.8
+   }
+  ]
+ },
+ "knight": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 18,
+  "anchor": {
+   "x": 36,
+   "y": 62.99
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2,
+    "dur": 3.6
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6,
+    "dur": 3.6
+   },
+   {
+    "name": "attack",
+    "start": 8,
+    "n": 5,
+    "dur": 1
+   },
+   {
+    "name": "die",
+    "start": 13,
+    "n": 5,
+    "dur": 0.8
+   }
+  ]
+ },
+ "windrider": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 18,
+  "anchor": {
+   "x": 36,
+   "y": 62.99
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2,
+    "dur": 3.6
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6,
+    "dur": 3.6
+   },
+   {
+    "name": "attack",
+    "start": 8,
+    "n": 5,
+    "dur": 1.33
+   },
+   {
+    "name": "die",
+    "start": 13,
+    "n": 5,
+    "dur": 0.8
+   }
+  ]
+ },
+ "cataphract": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 18,
+  "anchor": {
+   "x": 36,
+   "y": 62.99
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2,
+    "dur": 3.6
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6,
+    "dur": 3.6
+   },
+   {
+    "name": "attack",
+    "start": 8,
+    "n": 5,
+    "dur": 1.6
+   },
+   {
+    "name": "die",
+    "start": 13,
+    "n": 5,
+    "dur": 0.8
+   }
+  ]
+ }
+}
