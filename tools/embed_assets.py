@@ -19,7 +19,16 @@ for kind in man:
         print('missing', p); sys.exit(1)
     png[kind] = 'data:image/png;base64,' + base64.b64encode(open(p, 'rb').read()).decode()
 
-payload = json.dumps({'units': man, 'png': png}, separators=(',', ':'))
+props, prop_png = {}, {}
+props_file = os.path.join(ASSETS, 'props.json')
+if os.path.exists(props_file):
+    props = json.load(open(props_file))
+    for name in props:
+        p = os.path.join(ASSETS, name + '.png')
+        prop_png[name] = 'data:image/png;base64,' + base64.b64encode(open(p, 'rb').read()).decode()
+
+payload = json.dumps({'units': man, 'png': png, 'props': props, 'propPng': prop_png},
+                     separators=(',', ':'))
 assert '</script' not in payload
 block = '<!--ASSETS--><script>window.SHEET_DATA=' + payload + ';</script><!--/ASSETS-->'
 
@@ -28,4 +37,4 @@ if '<!--ASSETS-->' not in html:
     print('no ASSETS marker in', HTML); sys.exit(1)
 html = re.sub(r'<!--ASSETS-->.*?<!--/ASSETS-->', lambda m: block, html, flags=re.S)
 open(HTML, 'w', encoding='utf-8').write(html)
-print('embedded %d sheets, %.1f MB total page' % (len(png), len(html) / 1e6))
+print('embedded %d sheets + %d props, %.1f MB page' % (len(png), len(prop_png), len(html) / 1e6))

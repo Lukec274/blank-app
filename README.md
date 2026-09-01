@@ -79,9 +79,31 @@ their berries run out, take the offensive, and resolve.
 
 ## About the artwork
 
-The original Age of Empires art is copyrighted, so none of it is used here, and nothing is
-fetched over the network. Terrain, trees, ore, buildings, unit sprites, interface icons and
-sound are all generated procedurally at load, which is also why the game works offline.
+No Age of Empires art is used — that material is Microsoft's. Units are **pre-rendered
+3D**, which is how the original game was built: a rigged model is rendered offline through
+a fixed isometric camera and baked into 2D frames. `tools/bake_units.js` drives three.js in
+headless Chromium to do exactly that, rendering five canonical facings (S, SE, E, NE, N)
+across idle, walk, attack, work, mine, build and death; the other three facings are those
+mirrored at draw time. Weapons, shields and a low-poly horse are built from primitives and
+parented to the rig's hand and root bones. Tunics render in keyed magenta and are recoloured
+per player as each frame is first needed, so one sheet serves every colour.
+
+`tools/embed_assets.py` inlines the sheets so the game stays a single self-contained file.
+Terrain, ore, trees, most buildings, interface icons and all sound remain generated in code
+at load, so nothing is fetched over the network and the game works offline.
+
+### Asset credits
+
+| Asset | Author | Licence | Used for |
+| --- | --- | --- | --- |
+| KayKit Character Animations 1.1 | Kay Lousberg (kaylousberg.com) | CC0 | Character mesh and every unit animation |
+| Universal Animation Library | Quaternius | CC0 | Reference rig, evaluated alongside KayKit |
+| Isometric Miniature Farm | Kenney (kenney.nl) | CC0 | Reference for prop scale |
+| Timbered House (16 angles) | supplied by the project owner | see note | The House building |
+
+The timbered house renders arrived without a licence file. They are used here because the
+project owner supplied them for this purpose; confirm redistribution rights before publishing
+the game publicly, since a shared build serves the image to anyone with the link.
 
 ## Running the Streamlit wrapper
 
