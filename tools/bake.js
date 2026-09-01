@@ -10,39 +10,46 @@ const S={
   die:   {name:'die',   clip:'Death_A',   n:5, from:0, to:.85},
 };
 const UNITS={
-  villager:{weapon:'axe', parts:{LegLeft:'leather',LegRight:'leather'},
+  villager:{hat:'cap', weapon:'axe', parts:{LegLeft:'leather',LegRight:'leather'},
     states:[S.idle,S.walk,{name:'attack',clip:'Chopping',n:5},
             {name:'work',clip:'Chopping',n:5},{name:'mine',clip:'Pickaxing',n:5},
             {name:'build',clip:'Hammering',n:5},S.die]},
-  militia:{weapon:'sword', shield:'round', parts:{LegLeft:'dark',LegRight:'dark'},
+  militia:{hat:'helm', weapon:'sword', shield:'round', parts:{LegLeft:'dark',LegRight:'dark'},
     states:[S.idle,S.walk,{name:'attack',clip:'Melee_1H_Attack_Slice_Diagonal',n:5},S.die]},
-  spearman:{weapon:'spear', parts:{LegLeft:'leather',LegRight:'leather'},
+  spearman:{hat:'helm', weapon:'spear', parts:{LegLeft:'leather',LegRight:'leather'},
     states:[S.idle,S.walk,{name:'attack',clip:'Melee_2H_Attack_Stab',n:5},S.die]},
-  archer:{weapon:'bow', parts:{Body:'team',LegLeft:'wood',LegRight:'wood'},
+  archer:{hat:'hood', weapon:'bow', parts:{Body:'team',LegLeft:'wood',LegRight:'wood'},
     states:[{name:'idle',clip:'Ranged_Bow_Idle',n:2},{name:'walk',clip:'Running_HoldingBow',n:6},
             {name:'attack',clip:'Ranged_Bow_Draw',n:5},S.die]},
-  skirmisher:{weapon:'spear', parts:{Body:'team',LegLeft:'cloth',LegRight:'cloth'},
+  skirmisher:{hat:'cap', weapon:'spear', parts:{Body:'team',LegLeft:'cloth',LegRight:'cloth'},
     states:[S.idle,S.walk,{name:'attack',clip:'Throw',n:5},S.die]},
-  pavise:{weapon:'sword', shield:'pavise', parts:{LegLeft:'dark',LegRight:'dark'},
+  pavise:{hat:'helm', weapon:'sword', shield:'pavise', parts:{LegLeft:'dark',LegRight:'dark'},
     states:[S.idle,S.walk,{name:'attack',clip:'Melee_1H_Attack_Chop',n:5},S.die]},
-  monk:{weapon:'staff', parts:{Body:'robe',LegLeft:'robe',LegRight:'robe',ArmLeft:'robe',ArmRight:'robe'},
+  monk:{hat:'hood', weapon:'staff', parts:{Body:'robe',LegLeft:'robe',LegRight:'robe',ArmLeft:'robe',ArmRight:'robe'},
     states:[S.idle,S.walk,{name:'attack',clip:'Ranged_Magic_Shoot',n:5},S.die]},
-  scout:{weapon:'sword', mount:{col:0x8a6740,dark:0x4a3520}, parts:{LegLeft:'dark',LegRight:'dark'},
+  scout:{hat:'cap', weapon:'sword', mount:{col:0x8a6740,dark:0x4a3520}, parts:{LegLeft:'dark',LegRight:'dark'},
     states:[{name:'idle',clip:'Sit_Chair_Idle',n:2},{name:'walk',clip:'Sit_Chair_Idle',n:6},
             {name:'attack',clip:'Melee_1H_Attack_Slice_Diagonal',n:5},S.die]},
-  knight:{weapon:'sword', shield:'round', mount:{col:0x4a4a55,dark:0x26262e}, parts:{LegLeft:'dark',LegRight:'dark'},
+  knight:{hat:'helmPlume', weapon:'sword', shield:'round', mount:{col:0x4a4a55,dark:0x26262e}, parts:{LegLeft:'dark',LegRight:'dark'},
     states:[{name:'idle',clip:'Sit_Chair_Idle',n:2},{name:'walk',clip:'Sit_Chair_Idle',n:6},
             {name:'attack',clip:'Melee_1H_Attack_Slice_Diagonal',n:5},S.die]},
-  windrider:{weapon:'bow', mount:{col:0x9a7448,dark:0x54402a}, parts:{LegLeft:'leather',LegRight:'leather'},
+  windrider:{hat:'cap', weapon:'bow', mount:{col:0x9a7448,dark:0x54402a}, parts:{LegLeft:'leather',LegRight:'leather'},
     states:[{name:'idle',clip:'Sit_Chair_Idle',n:2},{name:'walk',clip:'Sit_Chair_Idle',n:6},
             {name:'attack',clip:'Ranged_Bow_Draw',n:5},S.die]},
-  cataphract:{weapon:'spear', shield:'round', mount:{col:0x3e3a46,dark:0x1f1d24}, parts:{LegLeft:'dark',LegRight:'dark'},
+  cataphract:{hat:'helmPlume', weapon:'spear', shield:'round', mount:{col:0x3e3a46,dark:0x1f1d24}, parts:{LegLeft:'dark',LegRight:'dark'},
     states:[{name:'idle',clip:'Sit_Chair_Idle',n:2},{name:'walk',clip:'Sit_Chair_Idle',n:6},
             {name:'attack',clip:'Melee_2H_Attack_Stab',n:5},S.die]},
 };
 /* Generated models (Meshy or otherwise) live in the repo at tools/glb/ so they
    survive the container; the render page serves from /tmp/bake/glb, so stage
    them across before launching. Repo files win over anything already there. */
+/* the render page and its module deps are served from /tmp/bake, so the repo copy
+   has to be pushed across or edits here silently do nothing */
+fs.mkdirSync('/tmp/bake',{recursive:true});
+for(const f of ['bake.html'])
+  if(fs.existsSync(path.join(__dirname,f)))
+    fs.copyFileSync(path.join(__dirname,f),path.join('/tmp/bake',f));
+
 const SRC=path.join(__dirname,'glb'), DST='/tmp/bake/glb';
 if(fs.existsSync(SRC)){
   fs.mkdirSync(DST,{recursive:true});

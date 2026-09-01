@@ -182,7 +182,17 @@ window.__bake=async function(cfg){
     up.position.y=.40; g.add(up);
     g.scale.setScalar(S); B('chest').add(g);
   }
-  if(cfg.hat&&B('head')){ const h=makeHat(cfg.hat); h.scale.setScalar(S*1.55); h.position.y=.20*S; B('head').add(h); }
+  if(cfg.hat&&B('head')){
+    /* the head bone sits at the neck, not the crown -- offsetting by a fraction of
+       the whole body buried the hat inside the head mesh. Size and place it from
+       the head's own extent instead. */
+    const hb=B('head'); hb.updateWorldMatrix(true,false);
+    const crown=box0.max.y-new THREE.Vector3().setFromMatrixPosition(hb.matrixWorld).y;
+    const h=makeHat(cfg.hat);
+    h.scale.setScalar(crown*3.5);
+    h.position.y=crown*0.78;
+    hb.add(h);
+  }
 
   let horse=null, rider=root;
   if(cfg.mount){
