@@ -88,6 +88,9 @@ mirrored at draw time. Weapons, shields and a low-poly horse are built from prim
 parented to the rig's hand and root bones. Tunics render in keyed magenta and are recoloured
 per player as each frame is first needed, so one sheet serves every colour.
 
+The models themselves are not vendored -- 18MB of binaries that `tools/fetch_models.sh`
+restores from the CC0 upstream in one command. Run it before baking on a fresh checkout.
+
 Building the page is four steps: `tools/bake.js` renders the sheets,
 `tools/quantise.py` posterises them to 5 bits per channel (the renderer's antialiasing
 noise is invisible at 46 px but roughly doubles the PNGs), `tools/embed_fonts.py` inlines
@@ -102,8 +105,9 @@ works offline.
 
 | Asset | Author | Licence | Used for |
 | --- | --- | --- | --- |
-| KayKit Character Animations 1.1 | Kay Lousberg (kaylousberg.com) | CC0 | Character mesh and every unit animation |
-| Universal Animation Library | Quaternius | CC0 | Reference rig, evaluated alongside KayKit |
+| KayKit Adventurers Character Pack 1.0 | Kay Lousberg (kaylousberg.com) | CC0 | Every unit model, and their weapons, shields, helmets and capes |
+| KayKit Character Animations 1.1 | Kay Lousberg (kaylousberg.com) | CC0 | Every unit animation |
+| Universal Animation Library | Quaternius | CC0 | Evaluated and not used: Unreal-style rig, incompatible with the KayKit clips |
 | Isometric Miniature Farm | Kenney (kenney.nl) | CC0 | Reference for prop scale |
 | Timbered House (16 angles) | supplied by the project owner | see note | The House building |
 

@@ -146,7 +146,19 @@ window.__bake=async function(cfg){
   /* per-part materials so the tunic can carry the player colour */
   const partMat={Body:'team',Head:'skin',ArmLeft:'skin',ArmRight:'skin',LegLeft:'cloth',LegRight:'cloth'};
   if(cfg.keepMaterials){
-    root.traverse(o=>{ if(o.isMesh||o.isSkinnedMesh)o.frustumCulled=false; });
+    /* Packs like KayKit's Adventurers carry every weapon, shield, hat and cape
+       as its own mesh, all visible at once. cfg.show names the ones this unit
+       carries; body parts always stay. */
+    const BODY=/(ArmLeft|ArmRight|Body|Head|Head_Hooded|LegLeft|LegRight)$/;
+    const keep=new Set(cfg.show||[]);
+    root.traverse(o=>{
+      if(!o.isMesh&&!o.isSkinnedMesh)return;
+      o.frustumCulled=false;
+      if(!BODY.test(o.name)) o.visible=keep.has(o.name);
+      /* keeping the pack's textures would cost the team colour, so key one
+         garment -- a cape or tabard reads as ownership across the map. */
+      if(cfg.teamMesh&&o.name===cfg.teamMesh) o.material=MATS.team;
+    });
   } else
   root.traverse(o=>{
     if(!o.isMesh&&!o.isSkinnedMesh)return;
@@ -154,7 +166,19 @@ window.__bake=async function(cfg){
     const key=(cfg.parts&&cfg.parts[n])||partMat[n]||'cloth';
     o.material=MATS[key]; o.frustumCulled=false;
   });
-  const box0=new THREE.Box3().setFromObject(root);
+  /* Frame from the body alone. Box3.setFromObject ignores the visible flag, so a
+     pack model's hidden staff or spare shield would otherwise stretch the box and
+     shrink the unit inside its frame -- the mage measures 3.0 units on a 2.0 body
+     because of the staff it is not even holding. */
+  const BODYRE=/(ArmLeft|ArmRight|Body|Head|Head_Hooded|LegLeft|LegRight)$/;
+  const box0=new THREE.Box3();
+  let bodyFound=false;
+  root.traverse(o=>{
+    if((!o.isMesh&&!o.isSkinnedMesh)||!o.visible)return;
+    if(!BODYRE.test(o.name))return;
+    box0.expandByObject(o); bodyFound=true;
+  });
+  if(!bodyFound) box0.setFromObject(root);
   const BH=box0.max.y-box0.min.y;              /* body height in world units */
   const S=BH*0.95;                              /* everything attached scales with the body */
   const bones={};
