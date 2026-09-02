@@ -231,8 +231,17 @@ window.__bake=async function(cfg){
   const mixer=new THREE.AnimationMixer(root);
   const box3=box0;                    /* body only: weapons must not change the framing */
   const height=box3.max.y-box3.min.y;
-  const cy=box3.min.y+height*(cfg.mount?0.60:0.46);
-  placeCam(height*(cfg.mount?1.02:0.80)*(cfg.zoom||1), cy);
+  /* box0 comes from bind-pose geometry, so it cannot see the shrunken head --
+     the unit would just sit smaller in its frame. Take the height back off the
+     framing by the fraction of the body the head actually occupies. */
+  let fit=height;
+  if(cfg.headScale&&B('head')){
+    const hy=new THREE.Vector3().setFromMatrixPosition(B('head').matrixWorld).y;
+    const headFrac=(box3.max.y-hy)/height;
+    fit=height*(1-(1-cfg.headScale)*headFrac);
+  }
+  const cy=box3.min.y+fit*(cfg.mount?0.60:0.46);
+  placeCam(fit*(cfg.mount?1.02:0.80)*(cfg.zoom||1), cy);
   cam.updateMatrixWorld(true);
   /* where the feet land in the frame — the game anchors sprites here */
   const o=new THREE.Vector3(0,box3.min.y,0).project(cam);
@@ -265,6 +274,11 @@ window.__bake=async function(cfg){
         root.rotation.y=yaw;
         if(horse)horse.rotation.y=yaw;
         mixer.setTime(0); mixer.setTime(t);
+        /* The pack's characters are chibi -- head about a third of the body.
+           Soldiers read as soldiers when the kit dominates the silhouette, so
+           shrink the head. Has to happen after the mixer writes the pose, or the
+           clip's own tracks overwrite it. */
+        if(cfg.headScale&&B('head')) B('head').scale.setScalar(cfg.headScale);
         root.updateMatrixWorld(true);
         renderer.render(scene,cam);
         sx.drawImage(renderer.domElement,(col+f)*FW,d*FH);
