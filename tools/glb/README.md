@@ -5,7 +5,8 @@ Drop `.glb` files here. `tools/bake.js` copies everything in this folder into
 command away from being baked:
 
 ```bash
-node tools/bake.js villager      # bake a single unit
+node tools/bake.js --inspect m.glb  # check the rig first
+node tools/bake.js villager         # bake a single unit
 ```
 
 The name in the folder must match the `mesh:` field of that unit's entry in the

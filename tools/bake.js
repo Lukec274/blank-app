@@ -9,6 +9,34 @@ const S={
   walk:  {name:'walk',  clip:'Walking_B', n:6},
   die:   {name:'die',   clip:'Death_A',   n:5, from:0, to:.85},
 };
+/* Dropping in a different model
+   ----------------------------
+   Put the .glb in tools/glb/, then:
+
+     node tools/bake.js --inspect <file.glb>     what rig is it, do the clips bind
+     node tools/bake.js <unit>                   bake just that unit
+     python3 tools/quantise.py                   shrink the sheets
+     python3 tools/embed_assets.py               inline them into the game
+
+   Same rig as the stock mannequin (KayKit) -- the whole animation library
+   retargets, so only `mesh` changes:
+
+     militia:{ mesh:'knight.glb', keepMaterials:true, hat:'helm', weapon:'sword',
+               states:[S.idle,S.walk,{name:'attack',clip:'Melee_1H_Attack_Slice_Diagonal',n:5},S.die] },
+
+   Different rig carrying its own clips -- name them with clipMap, keyed by the
+   clip names the states below ask for:
+
+     militia:{ mesh:'gen_militia.glb', keepMaterials:true,
+               clipMap:{ Idle_A:'Idle_Loop', Walking_B:'Walk_Loop',
+                         Melee_1H_Attack_Slice_Diagonal:'Sword_Attack', Death_A:'Death01' },
+               states:[S.idle,S.walk,{name:'attack',clip:'Melee_1H_Attack_Slice_Diagonal',n:5},S.die] },
+
+   keepMaterials:true keeps the model's own textures instead of the flat per-part
+   materials below. Team colour then has to come from somewhere else: either ask
+   for a plain tabard you can key to magenta, or let the building pennant and the
+   selection ring carry ownership. `parts` maps the trailing word of each mesh
+   name (Mannequin_Medium_Body -> Body) onto an entry in MATS. */
 const UNITS={
   villager:{hat:'cap', weapon:'axe', parts:{LegLeft:'leather',LegRight:'leather'},
     states:[S.idle,S.walk,{name:'attack',clip:'Chopping',n:5},
@@ -73,6 +101,44 @@ const srv=http.createServer((q,s)=>{
   page.on('pageerror',e=>console.log('PAGEERR',e.message));
   await page.goto('http://127.0.0.1:8799/');
   await page.waitForFunction(()=>window.__ready,{timeout:30000});
+  /* --inspect <file.glb>: report whether a candidate model can stand in for the
+     stock mannequin, instead of finding out from 33 T-posed frames. */
+  if(process.argv[2]==='--inspect'){
+    const file=process.argv[3];
+    if(!file){ console.error('usage: node tools/bake.js --inspect <file.glb>'); process.exit(2); }
+    const r=await page.evaluate(([f,a])=>window.__inspect(f,a),[file,A]);
+    const pct=(n)=>String(n).padStart(3)+'%';
+    console.log('\n'+r.file);
+    console.log('  height        '+r.height+' world units  (stock mannequin is 2.204)');
+    console.log('  bones         '+r.bones.length);
+    console.log('  meshes        '+r.meshes.map(m=>m.name+(m.textured?' [tex]':'')).join(', '));
+    if(r.ownClips.length) console.log('  own clips     '+r.ownClips.join(', '));
+    console.log('  shared clips  '+pct(r.clipBindingAvg)+' of animation tracks bind to this skeleton');
+    if(r.rigMissing.length) console.log('  MISSING bones '+r.rigMissing.join(', '));
+    if(r.rigExtra.length)   console.log('  extra bones   '+r.rigExtra.slice(0,12).join(', ')+(r.rigExtra.length>12?' ...':''));
+
+    const ok=r.rigMissing.length===0;
+    console.log('');
+    if(ok){
+      console.log('  VERDICT  same rig. Set mesh:\''+file+'\' on a unit and every existing');
+      console.log('           clip retargets. Add keepMaterials:true to keep its textures.');
+    } else if(r.ownClips.length){
+      console.log('  VERDICT  different rig, but it carries its own clips. Use mesh: with a');
+      console.log('           clipMap: mapping the game state names onto those clip names,');
+      console.log('           and keepMaterials:true. Procedural weapons and hats need');
+      console.log('           hand/head bones -- absent here, so they will not attach.');
+    } else {
+      console.log('  VERDICT  different rig and no clips of its own. Not usable as a drop-in');
+      console.log('           without retargeting onto the stock skeleton first.');
+    }
+    if(Math.abs(r.height-2.204)>0.6){
+      console.log('  NOTE     height differs a lot from the stock model; attachments scale off');
+      console.log('           the body box, so check weapon and hat size in the first bake.');
+    }
+    console.log('');
+    await br.close(); srv.close(); return;
+  }
+
   const only=process.argv[2];
   /* a single-unit bake must not drop the other units out of the manifest */
   const MF=path.join(OUT,'units.json');

@@ -259,5 +259,55 @@ window.__bake=async function(cfg){
   return {png:sheet.toDataURL('image/png'),layout,frames:total,fw:FW,fh:FH,anchor,diag:window.__diag,
     bones:window.__bones.slice(0,30)};
 };
+
+/* Drop-in validation. A candidate model that does not share the stock skeleton
+   fails silently -- the clips bind to nothing and every frame renders a T-pose --
+   so check before spending a bake on it. */
+const RIG=["root","hips","upperlegl","lowerlegl","footl","toesl","spine","chest",
+           "upperarmr","lowerarmr","wristr","handr","head","upperarml","lowerarml",
+           "wristl","handl","upperlegr","lowerlegr","footr","toesr"];
+window.__inspect=async function(file,animFiles){
+  const gltf=await load('./glb/'+file);
+  const root=gltf.scene;
+  scene.add(root); root.updateMatrixWorld(true);
+
+  const nodes=new Set(), bones=[], meshes=[];
+  root.traverse(o=>{
+    nodes.add(o.name);
+    if(o.isBone) bones.push(o.name);
+    if(o.isMesh||o.isSkinnedMesh)
+      meshes.push({name:o.name, skinned:!!o.isSkinnedMesh, textured:!!(o.material&&o.material.map)});
+  });
+
+  const box=new THREE.Box3().setFromObject(root);
+  const own=(gltf.animations||[]).map(c=>c.name);
+
+  /* how well does the shared animation library land on this skeleton? A track is
+     named "<node>.<property>", so a track whose node is missing here is dead. */
+  const clips={};
+  for(const f of (animFiles||[])){
+    const a=await load('./glb/anim_'+f+'.glb');
+    for(const c of a.animations) clips[c.name]=c;
+  }
+  const binding={};
+  for(const n in clips){
+    const tr=clips[n].tracks;
+    const hit=tr.filter(t=>nodes.has(t.name.split('.')[0])).length;
+    binding[n]=tr.length?Math.round(hit/tr.length*100):0;
+  }
+  const scores=Object.values(binding);
+  const avg=scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length):0;
+
+  scene.remove(root);
+  return {
+    file, bones, meshes, ownClips:own,
+    height:+(box.max.y-box.min.y).toFixed(3),
+    minY:+box.min.y.toFixed(3), maxY:+box.max.y.toFixed(3),
+    rigMissing:RIG.filter(b=>!nodes.has(b)),
+    rigExtra:bones.filter(b=>!RIG.includes(b)),
+    clipBinding:binding, clipBindingAvg:avg,
+  };
+};
+
 window.__ready=true;
 </script>
