@@ -81,16 +81,22 @@ their berries run out, take the offensive, and resolve.
 
 No Age of Empires art is used — that material is Microsoft's. Units are **pre-rendered
 3D**, which is how the original game was built: a rigged model is rendered offline through
-a fixed isometric camera and baked into 2D frames. `tools/bake_units.js` drives three.js in
+a fixed isometric camera and baked into 2D frames. `tools/bake.js` drives three.js in
 headless Chromium to do exactly that, rendering five canonical facings (S, SE, E, NE, N)
 across idle, walk, attack, work, mine, build and death; the other three facings are those
 mirrored at draw time. Weapons, shields and a low-poly horse are built from primitives and
 parented to the rig's hand and root bones. Tunics render in keyed magenta and are recoloured
 per player as each frame is first needed, so one sheet serves every colour.
 
-`tools/embed_assets.py` inlines the sheets so the game stays a single self-contained file.
-Terrain, ore, trees, most buildings, interface icons and all sound remain generated in code
-at load, so nothing is fetched over the network and the game works offline.
+Building the page is four steps: `tools/bake.js` renders the sheets,
+`tools/quantise.py` posterises them to 5 bits per channel (the renderer's antialiasing
+noise is invisible at 46 px but roughly doubles the PNGs), `tools/embed_fonts.py` inlines
+the two webfonts, and `tools/embed_assets.py` inlines the sheets. `tools/bake.js --inspect`
+reports whether a replacement model shares the rig before you spend a bake on it.
+
+Terrain, ore, trees, most buildings, interface icons and all sound are generated in code at
+load. With the fonts embedded the page fetches nothing at all, so the game is one file and
+works offline.
 
 ### Asset credits
 
