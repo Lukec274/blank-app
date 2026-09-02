@@ -329,6 +329,55 @@ window.__bake=async function(cfg){
     bones:window.__bones.slice(0,30)};
 };
 
+/* Buildings. Rendered through the same 2:1 dimetric camera as the units, scaled
+   so the model's footprint lands exactly on an n-tile diamond, then cropped to
+   its own alpha so the game can anchor it at the footprint centre. */
+const TW=64, TH=32;
+function cv(w,h){const c=document.createElement('canvas');c.width=w;c.height=h;return [c,c.getContext('2d',{willReadFrequently:true})];}
+window.__bakeProp=async function(cfg){
+  const gltf=await load('./glb/'+cfg.mesh);
+  const root=gltf.scene;
+  scene.add(root); root.updateMatrixWorld(true);
+  root.traverse(o=>{ if(o.isMesh){o.frustumCulled=false;
+    if(cfg.hide&&cfg.hide.some(h=>o.name.indexOf(h)>=0))o.visible=false; } });
+
+  let box=new THREE.Box3().setFromObject(root);
+  /* sit it on the origin: footprint centred, base at y=0 */
+  root.position.set(-(box.min.x+box.max.x)/2, -box.min.y, -(box.min.z+box.max.z)/2);
+  root.updateMatrixWorld(true);
+  box=new THREE.Box3().setFromObject(root);
+  const foot=Math.max(box.max.x-box.min.x, box.max.z-box.min.z);
+
+  /* pixels per world unit, so a `tiles`-wide footprint spans tiles*TW across the
+     diamond (a world square reads sqrt(2) wider once turned 45 degrees) */
+  const k=(cfg.tiles*TW)/(foot*Math.SQRT2);
+  const W=Math.ceil(cfg.tiles*TW*2.2), H=Math.ceil(cfg.tiles*TW*2.2);
+  renderer.setSize(W,H,false);
+  cam.position.set(Math.sin(YAW)*Math.cos(PITCH)*40, Math.sin(PITCH)*40, Math.cos(YAW)*Math.cos(PITCH)*40);
+  cam.lookAt(0,(box.max.y-box.min.y)*0.42,0);
+  cam.left=-W/(2*k); cam.right=W/(2*k); cam.top=H/(2*k); cam.bottom=-H/(2*k);
+  cam.updateProjectionMatrix(); cam.updateMatrixWorld(true);
+  renderer.render(scene,cam);
+
+  const o=new THREE.Vector3(0,0,0).project(cam);
+  let ax=(o.x*0.5+0.5)*W, ay=(-o.y*0.5+0.5)*H;
+
+  /* crop to the drawn pixels, moving the anchor with the crop */
+  const [cc,cx]=cv(W,H); cx.drawImage(renderer.domElement,0,0);
+  const d=cx.getImageData(0,0,W,H).data;
+  let x0=W,y0=H,x1=-1,y1=-1;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    if(d[(y*W+x)*4+3]>6){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+  }
+  if(x1<0){ scene.remove(root); throw new Error('nothing rendered for '+cfg.mesh); }
+  const cw=x1-x0+1, ch=y1-y0+1;
+  const [outc,octx]=cv(cw,ch); octx.drawImage(cc,-x0,-y0);
+  scene.remove(root);
+  renderer.setSize(FW,FH,false);
+  return {png:outc.toDataURL('image/png'), w:cw, h:ch,
+          ax:+(ax-x0).toFixed(2), ay:+(ay-y0).toFixed(2)};
+};
+
 /* Drop-in validation. A candidate model that does not share the stock skeleton
    fails silently -- the clips bind to nothing and every frame renders a T-pose --
    so check before spending a bake on it. */

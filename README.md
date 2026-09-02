@@ -105,15 +105,15 @@ works offline.
 
 | Asset | Author | Licence | Used for |
 | --- | --- | --- | --- |
+| KayKit Medieval Hexagon Pack 1.0 | Kay Lousberg (kaylousberg.com) | CC0 | Every building |
 | KayKit Adventurers Character Pack 1.0 | Kay Lousberg (kaylousberg.com) | CC0 | Every unit model, and their weapons, shields, helmets and capes |
 | KayKit Character Animations 1.1 | Kay Lousberg (kaylousberg.com) | CC0 | Every unit animation |
 | Universal Animation Library | Quaternius | CC0 | Evaluated and not used: Unreal-style rig, incompatible with the KayKit clips |
 | Isometric Miniature Farm | Kenney (kenney.nl) | CC0 | Reference for prop scale |
-| Timbered House (16 angles) | supplied by the project owner | see note | The House building |
 
-The timbered house renders arrived without a licence file. They are used here because the
-project owner supplied them for this purpose; confirm redistribution rights before publishing
-the game publicly, since a shared build serves the image to anyone with the link.
+Everything shipped in the page is CC0. The timbered house renders that previously
+stood in for the House arrived without a licence file and have been removed now that
+the Hexagon pack covers buildings.
 
 ## Running the Streamlit wrapper
 

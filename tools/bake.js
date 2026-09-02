@@ -37,6 +37,25 @@ const S={
    for a plain tabard you can key to magenta, or let the building pennant and the
    selection ring carry ownership. `parts` maps the trailing word of each mesh
    name (Mannequin_Medium_Body -> Body) onto an entry in MATS. */
+/* Buildings, from KayKit's Medieval Hexagon Pack. `tiles` is the footprint in
+   game tiles and must match BLD[kind].size, or the sprite will not sit on its
+   plot. Baked from the blue set; ownership comes from the pennant propSprite
+   composites on top, as it already does for the houses. */
+const PROPS={
+  bld_tc:      {mesh:'building_market_blue.gltf',         tiles:3},
+  bld_house:   {mesh:'building_home_A_blue.gltf',         tiles:1},
+  bld_mill:    {mesh:'building_windmill_blue.gltf',       tiles:2},
+  bld_lumber:  {mesh:'building_lumbermill_blue.gltf',     tiles:2},
+  bld_mining:  {mesh:'building_mine_blue.gltf',           tiles:2},
+  bld_barracks:{mesh:'building_barracks_blue.gltf',       tiles:3},
+  bld_range:   {mesh:'building_archeryrange_blue.gltf',   tiles:3},
+  bld_smith:   {mesh:'building_blacksmith_blue.gltf',     tiles:2},
+  bld_tower:   {mesh:'building_tower_A_blue.gltf',        tiles:1},
+  bld_monastery:{mesh:'building_church_blue.gltf',        tiles:3},
+  bld_castle:  {mesh:'building_castle_blue.gltf',         tiles:3},
+  bld_siege:   {mesh:'building_tower_catapult_blue.gltf', tiles:3},
+};
+
 const UNITS={
   /* KayKit's Adventurers pack: same rig as the mannequin, so the shared clip
      library still drives everything. Weapons, shields, helmets and capes are
@@ -100,7 +119,7 @@ const SRC=path.join(__dirname,'glb'), DST='/tmp/bake/glb';
 if(fs.existsSync(SRC)){
   fs.mkdirSync(DST,{recursive:true});
   for(const f of fs.readdirSync(SRC)){
-    if(!f.endsWith('.glb'))continue;
+    if(!/\.(glb|gltf|bin|png)$/.test(f))continue;
     fs.copyFileSync(path.join(SRC,f),path.join(DST,f));
     console.log('staged',f);
   }
@@ -154,6 +173,21 @@ const srv=http.createServer((q,s)=>{
       console.log('           the body box, so check weapon and hat size in the first bake.');
     }
     console.log('');
+    await br.close(); srv.close(); return;
+  }
+
+  /* --props: bake the building models into prop sheets the game anchors on the
+     footprint diamond, the same path the houses already use. */
+  if(process.argv[2]==='--props'){
+    const PF=path.join(OUT,'props.json');
+    const props=fs.existsSync(PF)?JSON.parse(fs.readFileSync(PF,'utf8')):{};
+    for(const [name,cfg] of Object.entries(PROPS)){
+      const r=await page.evaluate(c=>window.__bakeProp(c),cfg);
+      fs.writeFileSync(path.join(OUT,name+'.png'),Buffer.from(r.png.split(',')[1],'base64'));
+      props[name]={ax:r.ax,ay:r.ay,w:r.w,h:r.h};
+      console.log(name.padEnd(14), r.w+'x'+r.h, 'anchor', r.ax+','+r.ay);
+    }
+    fs.writeFileSync(PF,JSON.stringify(props,null,1));
     await br.close(); srv.close(); return;
   }
 

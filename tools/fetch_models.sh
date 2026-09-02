@@ -22,4 +22,20 @@ for f in Knight Rogue Rogue_Hooded Mage Barbarian; do
 done
 
 cp "$TMP/pack/LICENSE.txt" "$DEST/KayKit-Adventurers-LICENSE.txt"
-echo "done. licence copied to glb/KayKit-Adventurers-LICENSE.txt"
+
+# Buildings. gltf here rather than glb, so each file needs its .bin and the
+# shared atlas beside it under the exact name the .gltf refers to.
+HEX=https://github.com/KayKit-Game-Assets/KayKit-Medieval-Hexagon-Pack-1.0
+echo "cloning $HEX"
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --quiet "$HEX" "$TMP/hex"
+HSRC="$TMP/hex/addons/kaykit_medieval_hexagon_pack/Assets/gltf/buildings/blue"
+for b in market home_A windmill lumbermill mine barracks archeryrange \
+         blacksmith tower_A church castle tower_catapult; do
+  cp "$HSRC/building_${b}_blue.gltf" "$DEST/"
+  cp "$HSRC/building_${b}_blue.bin"  "$DEST/"
+done
+cp "$HSRC/hexagons_medieval.png" "$DEST/"
+cp "$TMP/hex/LICENSE.txt" "$DEST/KayKit-Hexagon-LICENSE.txt"
+echo "  12 buildings + atlas"
+
+echo "done. licences copied to glb/"
