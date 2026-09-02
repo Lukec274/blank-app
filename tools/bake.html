@@ -69,6 +69,22 @@ function makeWeapon(kind){
     const arc=new THREE.Mesh(new THREE.TorusGeometry(.17,.014,6,14,Math.PI*1.15),MATS.wood);
     arc.rotation.z=Math.PI/2+Math.PI*0.075; arc.rotation.y=Math.PI/2; g.add(arc);
     const str=cyl(.004,.33,MATS.robe,4); str.position.z=-.01; g.add(str);
+  } else if(kind==='pike'){
+    /* Long enough to break the body's outline. It is angled by wrot rather than
+       stood upright, because the frame is wider on the diagonal. */
+    const s=cyl(.013,1.05,MATS.wood); s.position.y=.34; g.add(s);
+    const t=new THREE.Mesh(new THREE.ConeGeometry(.030,.15,8),MATS.steel); t.position.y=.93; g.add(t);
+    for(const d of [-1,1]){                        /* langets: the steel straps below the head */
+      const l=box(.012,.13,.012,MATS.steel); l.position.set(d*.016,.80,0); g.add(l);
+    }
+    const butt=cyl(.017,.05,MATS.steel); butt.position.y=-.17; g.add(butt);
+  } else if(kind==='longbow'){
+    const arc=new THREE.Mesh(new THREE.TorusGeometry(.30,.013,6,16,Math.PI*1.05),MATS.wood);
+    arc.rotation.z=Math.PI/2+Math.PI*0.10; arc.rotation.y=Math.PI/2; g.add(arc);
+    const str=cyl(.004,.56,MATS.robe,4); str.position.z=-.015; g.add(str);
+    for(const d of [-1,1]){                        /* horn nocks read as two bright ticks */
+      const n=cyl(.011,.04,MATS.gold,6); n.position.set(0,d*.28,-.005); g.add(n);
+    }
   } else if(kind==='staff'){
     const s=cyl(.015,.52,MATS.wood); s.position.y=.15; g.add(s);
     const o=new THREE.Mesh(new THREE.SphereGeometry(.035,8,6),MATS.gold); o.position.y=.42; g.add(o);
@@ -77,6 +93,21 @@ function makeWeapon(kind){
 }
 function makeShield(kind){
   const g=new THREE.Group();
+  if(kind==='kite'){
+    /* Tall teardrop -- the shape that separates a line infantryman from a
+       round-shielded skirmisher at a glance. Built from a tapering stack so the
+       point reads even when it is six pixels wide. */
+    const seg=[[.24,.10],[.23,.02],[.19,-.06],[.13,-.13],[.06,-.19]];
+    for(const [w,y] of seg){
+      const b=box(.028,.09,w,MATS.team); b.position.set(0,y,0); g.add(b);
+      const r=box(.016,.095,w*1.06,MATS.dark); r.position.set(-.015,y,0); g.add(r);
+    }
+    const top=box(.028,.06,.24,MATS.team); top.position.y=.17; g.add(top);
+    const rim=box(.016,.065,.255,MATS.dark); rim.position.set(-.015,.17,0); g.add(rim);
+    const boss=new THREE.Mesh(new THREE.SphereGeometry(.026,8,6),MATS.gold);
+    boss.position.set(.022,.08,0); g.add(boss);
+    return g;
+  }
   const big = kind==='pavise';
   const w=big?.20:.17, h=big?.30:.21;
   const b=box(.03,h,w,MATS.team); g.add(b);

@@ -52,7 +52,7 @@ const UNITS={
     show:['1H_Sword','Round_Shield','Knight_Helmet'],
     states:[S.idle,S.walk,{name:'attack',clip:'Melee_1H_Attack_Slice_Diagonal',n:5},S.die]},
   spearman:{headScale:0.6, mesh:'kit_barbarian.glb', keepMaterials:true, teamMesh:'Barbarian_Body', show:['Barbarian_Hat'],
-    weapon:'spear',
+    weapon:'pike', wrot:[3.14159,0,0.55], shield:'kite',
     states:[S.idle,S.walk,{name:'attack',clip:'Melee_2H_Attack_Stab',n:5},S.die]},
   archer:{headScale:0.64, mesh:'kit_rogue_hooded.glb', keepMaterials:true, teamMesh:'Rogue_Cape',
     show:['2H_Crossbow','Rogue_Cape'],
