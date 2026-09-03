@@ -519,9 +519,9 @@ function civHas(p,kind){
 /* ============================================================
    ART FORGE — procedural textures & sprites
    ============================================================ */
-const TT = {WATER:0,SHALLOW:1,SAND:2,GRASS:3,MEADOW:4,DIRT:5,ROCK:6};
-const TT_PRIO = [0,1,2,6,6,4,5];
-const TT_PASS = [0,0,1,1,1,1,1];
+const TT = {WATER:0,SHALLOW:1,SAND:2,GRASS:3,MEADOW:4,DIRT:5,ROCK:6,COBBLE:7};
+const TT_PRIO = [0,1,2,6,6,4,5,3];
+const TT_PASS = [0,0,1,1,1,1,1,1];
 const TERRAIN = {
   /* Warmer and less saturated than a straight green, closer to the sun-bleached
      Mediterranean ground the reference art uses: olive grass, tan earth. */
@@ -532,6 +532,7 @@ const TERRAIN = {
   [TT.MEADOW]:  {c:'#7c8a47', c2:'#98a45c', spec:'blades'},
   [TT.DIRT]:    {c:'#8a7048', c2:'#a3885c', spec:'grain'},
   [TT.ROCK]:    {c:'#7a766c', c2:'#928d82', spec:'stone'},
+  [TT.COBBLE]:  {c:'#8f8a7e', c2:'#a8a293', spec:'cobble'},
 };
 
 const ART = {tiles:{},edges:{},water:[],deco:{},unit:new Map(),bld:new Map(),icon:new Map()};
@@ -565,6 +566,21 @@ function makeTile(type,ox,oy,noise,noise2){
     }
   }
   x.putImageData(img,0,0);
+  if(t.spec==='cobble'){
+    /* laid stones rather than noise -- a plaza should read as built, and the
+       reference puts one under the middle of every town */
+    const rc=mulberry32(9001+ox*17+oy*29);
+    for(let row=-1;row<TH/5+1;row++)for(let cl=-1;cl<TW/11+1;cl++){
+      const off=(row&1)?5.5:0;
+      const cxp=cl*11+off+rc()*1.2, cyp=row*5+rc()*1.0;
+      if(!insideDiamond(cxp-THW,cyp-THH))continue;
+      x.fillStyle=shade(t.c2,.84+rc()*.30);
+      x.beginPath();
+      if(x.roundRect)x.roundRect(cxp-4.6,cyp-2.1,9.2,4.2,1.4); else x.rect(cxp-4.6,cyp-2.1,9.2,4.2);
+      x.fill();
+      x.strokeStyle='rgba(38,33,26,.30)'; x.lineWidth=1; x.stroke();
+    }
+  }
   /* scattered detail: pebbles, blades, flowers */
   const r=mulberry32((type+1)*7919+ox*31+oy);
   if(t.spec==='blades'){
@@ -2027,6 +2043,19 @@ function makeClutter(b){
    Falls off with distance so the edges stay ragged rather than a neat square. */
 function wearGround(b){
   if(b.kind==='farm')return;
+  /* the civic buildings get a paved apron, which is what the reference puts at
+     the middle of a town; everything else just wears the grass */
+  if(b.kind==='tc'||b.kind==='castle'||b.kind==='market'){
+    const q=b.size+1;
+    for(let y=b.ty-q;y<b.ty+b.size+q;y++)for(let x=b.tx-q;x<b.tx+b.size+q;x++){
+      if(!inMap(x,y))continue;
+      const i=idx(x,y), tt=G.tile[i];
+      if(tt===TT.WATER||tt===TT.SHALLOW||tt===TT.ROCK)continue;
+      const d=Math.max(Math.abs(x-(b.tx+b.size/2-.5)),Math.abs(y-(b.ty+b.size/2-.5)));
+      if(d<=b.size/2+0.5 || hash2(x*11+3,y*17+7)<clamp(1-(d-b.size/2)/q,0,1)*0.7)
+        G.tile[i]=TT.COBBLE;
+    }
+  }
   const r=b.size+1;
   for(let y=b.ty-r;y<b.ty+b.size+r;y++)for(let x=b.tx-r;x<b.tx+b.size+r;x++){
     if(!inMap(x,y))continue;
@@ -3749,9 +3778,17 @@ let mmBase=null,mmT=0;
 function buildMMBase(){
   const [c,x]=cv(G.w,G.h);
   const img=x.createImageData(G.w,G.h),d=img.data;
-  const col={[TT.WATER]:[32,60,86],[TT.SHALLOW]:[58,102,124],[TT.SAND]:[186,166,120],
-    [TT.GRASS]:[74,101,50],[TT.MEADOW]:[95,113,58],[TT.DIRT]:[97,80,54],[TT.ROCK]:[102,100,94]};
-  for(let i=0;i<G.w*G.h;i++){const c2=col[G.tile[i]];d[i*4]=c2[0];d[i*4+1]=c2[1];d[i*4+2]=c2[2];d[i*4+3]=255;}
+  /* Take the minimap colours from the terrain palette rather than a second copy
+     of it. The duplicate had drifted from the map colours, and adding a terrain
+     type it did not know about threw on every frame. */
+  const col={};
+  for(const k of Object.keys(TERRAIN)){
+    const a=hex(TERRAIN[k].c), b=hex(TERRAIN[k].c2);
+    col[+k]=[(a[0]+b[0])>>1,(a[1]+b[1])>>1,(a[2]+b[2])>>1];
+  }
+  const fallback=[110,110,110];
+  for(let i=0;i<G.w*G.h;i++){const c2=col[G.tile[i]]||fallback;
+    d[i*4]=c2[0];d[i*4+1]=c2[1];d[i*4+2]=c2[2];d[i*4+3]=255;}
   x.putImageData(img,0,0);
   mmBase=c;
 }
