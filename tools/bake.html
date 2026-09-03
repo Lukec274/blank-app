@@ -472,8 +472,12 @@ window.__bakeProp=async function(cfg){
 
   /* pixels per world unit, so a `tiles`-wide footprint spans tiles*TW across the
      diamond (a world square reads sqrt(2) wider once turned 45 degrees) */
-  const k=(cfg.tiles*TW)/(foot*Math.SQRT2);
-  const W=Math.ceil(cfg.tiles*TW*2.2), H=Math.ceil(cfg.tiles*TW*2.2);
+  /* Buildings size to their plot, but decoration must share one world scale --
+     sizing each to its own footprint made a thinned tree cluster render larger
+     than a full one, and turned a stump into a tower. */
+  const k = cfg.px ? cfg.px : (cfg.tiles*TW)/(foot*Math.SQRT2);
+  const span=cfg.px? Math.max(foot,box.max.y-box.min.y)*cfg.px*1.9 : cfg.tiles*TW*2.2;
+  const W=Math.ceil(span), H=Math.ceil(span);
   renderer.setSize(W,H,false);
   cam.position.set(Math.sin(YAW)*Math.cos(PITCH)*40, Math.sin(PITCH)*40, Math.cos(YAW)*Math.cos(PITCH)*40);
   cam.lookAt(0,(box.max.y-box.min.y)*0.42,0);

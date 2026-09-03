@@ -42,6 +42,26 @@ const S={
    plot. Baked from the blue set; ownership comes from the pennant propSprite
    composites on top, as it already does for the houses. */
 const PROPS={
+  /* Forest and rock from the same pack as the buildings. trees_*_large through
+     _cut give the four depletion stages directly, which beats the procedural
+     canvas trees they replace. */
+  tree_a0:{mesh:'trees_A_large.gltf',    px:31},
+  tree_a1:{mesh:'trees_A_medium.gltf',   px:31},
+  tree_a2:{mesh:'trees_A_small.gltf',    px:31},
+  tree_a3:{mesh:'trees_A_cut.gltf',      px:31},
+  tree_b0:{mesh:'trees_B_large.gltf',    px:31},
+  tree_b1:{mesh:'trees_B_medium.gltf',   px:31},
+  tree_b2:{mesh:'trees_B_small.gltf',    px:31},
+  tree_b3:{mesh:'trees_B_cut.gltf',      px:31},
+  tree_c0:{mesh:'tree_single_A.gltf',    px:30},
+  tree_c3:{mesh:'tree_single_A_cut.gltf',px:30},
+  tree_d0:{mesh:'tree_single_B.gltf',    px:30},
+  tree_d3:{mesh:'tree_single_B_cut.gltf',px:30},
+  rock_a: {mesh:'rock_single_A.gltf',    px:88},
+  rock_b: {mesh:'rock_single_B.gltf',    px:88},
+  rock_c: {mesh:'rock_single_C.gltf',    px:88},
+  rock_d: {mesh:'rock_single_D.gltf',    px:88},
+  rock_e: {mesh:'rock_single_E.gltf',    px:88},
   bld_tc:      {mesh:'building_market_blue.gltf',         tiles:3},
   bld_house:   {mesh:'building_home_A_blue.gltf',         tiles:1},
   bld_mill:    {mesh:'building_windmill_blue.gltf',       tiles:2,
