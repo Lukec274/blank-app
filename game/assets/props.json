@@ -201,5 +201,103 @@
   "w": 41,
   "h": 32,
   "frames": 1
+ },
+ "dec_barrel": {
+  "ax": 5.5,
+  "ay": 11.51,
+  "w": 11,
+  "h": 14,
+  "frames": 1
+ },
+ "dec_crate_a_big": {
+  "ax": 8.5,
+  "ay": 13.48,
+  "w": 17,
+  "h": 18,
+  "frames": 1
+ },
+ "dec_crate_a_small": {
+  "ax": 6,
+  "ay": 8.65,
+  "w": 11,
+  "h": 11,
+  "frames": 1
+ },
+ "dec_crate_long_a": {
+  "ax": 11,
+  "ay": 12.84,
+  "w": 22,
+  "h": 19,
+  "frames": 1
+ },
+ "dec_sack": {
+  "ax": 5,
+  "ay": 5.22,
+  "w": 10,
+  "h": 7,
+  "frames": 1
+ },
+ "dec_pallet": {
+  "ax": 11,
+  "ay": 9.51,
+  "w": 22,
+  "h": 15,
+  "frames": 1
+ },
+ "dec_wheelbarrow": {
+  "ax": 11,
+  "ay": 13.57,
+  "w": 25,
+  "h": 18,
+  "frames": 1
+ },
+ "dec_resource_lumber": {
+  "ax": 18,
+  "ay": 16.98,
+  "w": 36,
+  "h": 26,
+  "frames": 1
+ },
+ "dec_resource_stone": {
+  "ax": 14,
+  "ay": 18.3,
+  "w": 28,
+  "h": 25,
+  "frames": 1
+ },
+ "dec_weaponrack": {
+  "ax": 6,
+  "ay": 14.55,
+  "w": 12,
+  "h": 18,
+  "frames": 1
+ },
+ "dec_target": {
+  "ax": 6,
+  "ay": 14.72,
+  "w": 11,
+  "h": 18,
+  "frames": 1
+ },
+ "dec_tent": {
+  "ax": 19.5,
+  "ay": 25.29,
+  "w": 39,
+  "h": 35,
+  "frames": 1
+ },
+ "dec_bucket_water": {
+  "ax": 4,
+  "ay": 6.99,
+  "w": 8,
+  "h": 9,
+  "frames": 1
+ },
+ "dec_ladder": {
+  "ax": 5.5,
+  "ay": 37.12,
+  "w": 10,
+  "h": 39,
+  "frames": 1
  }
 }

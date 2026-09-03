@@ -42,6 +42,21 @@ const S={
    plot. Baked from the blue set; ownership comes from the pennant propSprite
    composites on top, as it already does for the houses. */
 const PROPS={
+  /* town clutter -- what makes a settlement look lived in rather than placed */
+  dec_barrel:{mesh:'barrel.gltf', px:52},
+  dec_crate_a_big:{mesh:'crate_A_big.gltf', px:52},
+  dec_crate_a_small:{mesh:'crate_A_small.gltf', px:52},
+  dec_crate_long_a:{mesh:'crate_long_A.gltf', px:52},
+  dec_sack:{mesh:'sack.gltf', px:52},
+  dec_pallet:{mesh:'pallet.gltf', px:52},
+  dec_wheelbarrow:{mesh:'wheelbarrow.gltf', px:52},
+  dec_resource_lumber:{mesh:'resource_lumber.gltf', px:52},
+  dec_resource_stone:{mesh:'resource_stone.gltf', px:52},
+  dec_weaponrack:{mesh:'weaponrack.gltf', px:52},
+  dec_target:{mesh:'target.gltf', px:52},
+  dec_tent:{mesh:'tent.gltf', px:52},
+  dec_bucket_water:{mesh:'bucket_water.gltf', px:52},
+  dec_ladder:{mesh:'ladder.gltf', px:52},
   /* Forest and rock from the same pack as the buildings. trees_*_large through
      _cut give the four depletion stages directly, which beats the procedural
      canvas trees they replace. */
