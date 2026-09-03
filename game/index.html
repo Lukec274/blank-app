@@ -523,13 +523,15 @@ const TT = {WATER:0,SHALLOW:1,SAND:2,GRASS:3,MEADOW:4,DIRT:5,ROCK:6};
 const TT_PRIO = [0,1,2,6,6,4,5];
 const TT_PASS = [0,0,1,1,1,1,1];
 const TERRAIN = {
-  [TT.WATER]:   {c:'#20415f', c2:'#2d5878', spec:'water'},
-  [TT.SHALLOW]: {c:'#3f7392', c2:'#5490ad', spec:'water'},
-  [TT.SAND]:    {c:'#c2ac7c', c2:'#d9c495', spec:'grain'},
-  [TT.GRASS]:   {c:'#55763a', c2:'#688a45', spec:'blades'},
-  [TT.MEADOW]:  {c:'#6d8340', c2:'#87994f', spec:'blades'},
-  [TT.DIRT]:    {c:'#6d5a3d', c2:'#836c4c', spec:'grain'},
-  [TT.ROCK]:    {c:'#6f6d66', c2:'#87857c', spec:'stone'},
+  /* Warmer and less saturated than a straight green, closer to the sun-bleached
+     Mediterranean ground the reference art uses: olive grass, tan earth. */
+  [TT.WATER]:   {c:'#1d5578', c2:'#2f7ea4', spec:'water'},
+  [TT.SHALLOW]: {c:'#4e97b4', c2:'#6fb6ca', spec:'water'},
+  [TT.SAND]:    {c:'#cbb289', c2:'#e2cda3', spec:'grain'},
+  [TT.GRASS]:   {c:'#61743c', c2:'#7a8c4a', spec:'blades'},
+  [TT.MEADOW]:  {c:'#7c8a47', c2:'#98a45c', spec:'blades'},
+  [TT.DIRT]:    {c:'#8a7048', c2:'#a3885c', spec:'grain'},
+  [TT.ROCK]:    {c:'#7a766c', c2:'#928d82', spec:'stone'},
 };
 
 const ART = {tiles:{},edges:{},water:[],deco:{},unit:new Map(),bld:new Map(),icon:new Map()};
@@ -633,12 +635,19 @@ function forgeTerrain(){
     for(let v=0;v<6;v++) ART.tiles[t].push(makeTile(t, v*97, v*53, n, n2));
     /* the cut face shown below a raised tile, so relief does not look like
        sprites floating off the ground */
-    ART.tilesDark=ART.tilesDark||{};
-    ART.tilesDark[t]=ART.tiles[t].map(src=>{
-      const [c2,x2]=cv(src.width,src.height);
+    /* Each tile is pre-rendered with the earth column beneath it, so a raised
+       tile is one drawImage and there is no gap for the background to show
+       through. Filling gaps at draw time missed them -- that was the dark
+       dashes -- and doing it per pixel would cost thousands of calls a frame. */
+    ART.tilesCol=ART.tilesCol||{};
+    ART.tilesCol[t]=ART.tiles[t].map(src=>{
+      const [dk,dx]=cv(src.width,src.height);
+      dx.drawImage(src,0,0);
+      dx.globalCompositeOperation='source-atop';
+      dx.fillStyle='rgba(30,22,12,.34)'; dx.fillRect(0,0,src.width,src.height);
+      const [c2,x2]=cv(src.width,src.height+LIFT);
+      for(let o=LIFT;o>0;o--) x2.drawImage(dk,0,o);
       x2.drawImage(src,0,0);
-      x2.globalCompositeOperation='source-atop';
-      x2.fillStyle='rgba(24,18,10,.46)'; x2.fillRect(0,0,src.width,src.height);
       return c2;
     });
     ART.edges[t]=[0,1,2,3].map(d=>makeEdge(ART.tiles[t][0],d));
@@ -802,6 +811,38 @@ function forgeDeco(){
   ART.deco.stone=[rim(makeOre('stone',5)),rim(makeOre('stone',23))];
   ART.deco.berry=[rim(makeBush(31)),rim(makeBush(57))];
   ART.deco.farm=[0,1,2,3].map(makeFarm);
+  /* tufts, pebbles and flowers -- ground texture between the useful things */
+  ART.deco.scatter={tuft:[],pebble:[],flower:[]};
+  for(let v=0;v<4;v++){
+    const r=mulberry32(900+v*53);
+    let c,x;
+    [c,x]=cv(14,10);
+    for(let i=0;i<5+((r()*4)|0);i++){
+      const px=2+r()*10, py=7+r()*2, hgt=2+r()*4;
+      x.strokeStyle=['#5c7038','#6b8040','#4e6330','#7a8f4a'][(r()*4)|0];
+      x.lineWidth=1; x.beginPath(); x.moveTo(px,py);
+      x.lineTo(px+(r()-.5)*2.4,py-hgt); x.stroke();
+    }
+    ART.deco.scatter.tuft.push(c);
+    [c,x]=cv(11,7);
+    for(let i=0;i<2+((r()*2)|0);i++){
+      const px=2+r()*7, py=3+r()*3, s2=1.4+r()*1.8;
+      x.fillStyle=['#8b867c','#736e66','#9a958a'][(r()*3)|0];
+      x.beginPath(); x.ellipse(px,py,s2,s2*.66,0,0,7); x.fill();
+      x.fillStyle='rgba(0,0,0,.22)';
+      x.beginPath(); x.ellipse(px,py+s2*.5,s2,s2*.34,0,0,7); x.fill();
+    }
+    ART.deco.scatter.pebble.push(c);
+    [c,x]=cv(12,10);
+    x.strokeStyle='#4e6330'; x.lineWidth=1;
+    for(let i=0;i<3;i++){
+      const px=3+r()*6;
+      x.beginPath(); x.moveTo(px,9); x.lineTo(px+(r()-.5)*2,4+r()*2); x.stroke();
+      x.fillStyle=['#d8c24e','#d4736a','#c9a9d8','#e0e0d2'][(r()*4)|0];
+      x.beginPath(); x.arc(px+(r()-.5)*2,3.6+r()*2,1.5,0,7); x.fill();
+    }
+    ART.deco.scatter.flower.push(c);
+  }
   ART.deco.stump=(()=>{const[c,x]=cv(30,22);x.globalAlpha=.22;x.fillStyle='#000';x.beginPath();x.ellipse(15,16,9,4,0,0,7);x.fill();
     x.globalAlpha=1;x.fillStyle='#5c412a';x.beginPath();x.ellipse(15,12,6,3.4,0,0,7);x.fill();x.fillStyle='#7a5a3c';x.beginPath();x.ellipse(15,11,4,2.2,0,0,7);x.fill();return c;})();
 }
@@ -1455,7 +1496,7 @@ const inMap=(x,y)=> x>=0&&y>=0&&x<G.w&&y<G.h;
 const tileAt=(x,y)=> inMap(x,y)? G.tile[idx(x,y)] : TT.WATER;
 /* How far a tile is raised on screen, in unzoomed pixels. Purely visual: the
    simulation stays on a flat grid, so pathing and placement are untouched. */
-const LIFT=17;
+const LIFT=10;
 function liftAt(wx,wy){
   if(!G.hgt)return 0;
   const x=clamp(wx|0,0,G.w-1), y=clamp(wy|0,0,G.h-1);
@@ -1615,6 +1656,20 @@ function scatterWorld(nf){
     for(let k=0;k<2+rndi(3);k++) putBeast(kind,cx,cy,2);
   }
   for(let i=0;i<Math.round(size*size/2600);i++) putBeast('boar',rndi(size),rndi(size),1);
+  /* Ground detail. Nothing gameplay touches it -- it exists so the map is not
+     bare between the things that matter, which is most of what separates a
+     lived-in board from a spreadsheet of tiles. */
+  G.scatter=[];
+  const DEC=['dec_sack','dec_barrel','dec_crate_a_small','rock_a','rock_b','rock_c','rock_d'];
+  for(let i=0;i<Math.round(size*size/26);i++){
+    const x=rndi(size), y=rndi(size), t=G.tile[idx(x,y)];
+    if(t!==TT.GRASS&&t!==TT.MEADOW&&t!==TT.DIRT)continue;
+    if(G.occ[idx(x,y)]!==0)continue;
+    const r2=rnd();
+    G.scatter.push({x:x+.2+rnd()*.6, y:y+.2+rnd()*.6,
+                    kind: r2<.62?'tuft' : (r2<.86?'pebble':'flower'),
+                    v:rndi(4)});
+  }
 }
 function clearArea(tx,ty,r){
   for(let y=ty-r;y<=ty+r;y++)for(let x=tx-r;x<=tx+r;x++){
@@ -3329,12 +3384,10 @@ function draw(dt){
       if(t===TT.WATER||t===TT.SHALLOW) img=ART.water[(wf+((x*3+y*5)%6))%6];
       else img=ART.tiles[t][(hash2(x,y)*6)|0];
       const lift=liftAt(x,y)*z;
-      if(lift>0.6&&t!==TT.WATER&&t!==TT.SHALLOW){
-        const dk=(ART.tilesDark&&ART.tilesDark[t])?ART.tilesDark[t][(hash2(x,y)*6)|0]:img;
-        ctx.drawImage(dk,sx,sy,tw+1,th+1);
-        ctx.drawImage(dk,sx,sy-lift*0.5,tw+1,th+1);
-      }
-      ctx.drawImage(img,sx,sy-lift,tw+1,th+1);
+      const col=(lift>0.4&&t!==TT.WATER&&t!==TT.SHALLOW&&ART.tilesCol&&ART.tilesCol[t])
+                ? ART.tilesCol[t][(hash2(x,y)*6)|0] : null;
+      if(col) ctx.drawImage(col,sx,sy-lift,tw+1,(th+LIFT)*z+1);
+      else    ctx.drawImage(img,sx,sy-lift,tw+1,th+1);
       /* soft transitions with higher-priority neighbours (not worth it zoomed out) */
       if(z<0.62)continue;
       const pr=TT_PRIO[t];
@@ -3346,6 +3399,16 @@ function draw(dt){
         if(TT_PRIO[nt]<=pr||nt===TT.WATER)continue;
         ctx.drawImage(ART.edges[nt][nb[k][2]],sx,sy,tw+1,th+1);
       }
+    }
+  }
+  /* ground detail sits on the terrain, under everything that moves */
+  if(G.scatter&&z>0.55){
+    for(const d of G.scatter){
+      if(d.x<x0-1||d.x>x1+1||d.y<y0-1||d.y>y1+1)continue;
+      if(!p.explored[idx(d.x|0,d.y|0)])continue;
+      const img=ART.deco.scatter[d.kind][d.v%ART.deco.scatter[d.kind].length];
+      const gx=w2sx(d.x,d.y), gy=w2sy(d.x,d.y)-liftAt(d.x,d.y)*z;
+      ctx.drawImage(img,gx-img.width*z/2,gy-img.height*z+2*z,img.width*z,img.height*z);
     }
   }
   ctx.imageSmoothingEnabled=true;
