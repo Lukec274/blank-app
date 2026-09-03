@@ -134,6 +134,65 @@ function makeHat(kind){
   }
   return g;
 }
+/* Quadrupeds for the wildlife. Same construction as the horse -- one body,
+   four hip groups the bake loop swings by walk phase -- with the proportions
+   and fittings that separate a boar from a sheep at 46 px. */
+const BEASTS={
+  sheep: {col:0xe8e2d4, dark:0x4a4038, len:.78, wid:.46, high:.72, head:.30, snout:.16,
+          ears:'side', tail:'stub', legs:.34, woolly:true},
+  cattle:{col:0x8d6a4a, dark:0x3a2b20, len:1.02,wid:.56, high:.96, head:.34, snout:.24,
+          ears:'side', tail:'long', legs:.52, horns:true},
+  boar:  {col:0x554639, dark:0x241d18, len:.86, wid:.48, high:.70, head:.32, snout:.28,
+          ears:'back', tail:'stub', legs:.30, tusks:true, bristle:true},
+  wolf:  {col:0x6b6f74, dark:0x2c2f33, len:.94, wid:.36, high:.72, head:.28, snout:.26,
+          ears:'up',   tail:'brush',legs:.42},
+};
+function makeBeast(kind){
+  const B=BEASTS[kind];
+  const M=new THREE.MeshLambertMaterial({color:B.col});
+  const D=new THREE.MeshLambertMaterial({color:B.dark});
+  const g=new THREE.Group(), legs=[];
+  const y=B.high;
+  const body=box(B.wid,B.high*0.52,B.len,M); body.position.y=y; g.add(body);
+  if(B.woolly){                                  /* fleece breaks the boxy outline */
+    for(const [dx,dz] of [[-.14,.20],[.14,.20],[-.14,-.16],[.14,-.16],[0,.02]]){
+      const p2=box(B.wid*.52,B.high*.34,B.len*.30,M);
+      p2.position.set(dx*B.wid,y+B.high*.20,dz*B.len); g.add(p2);
+    }
+  }
+  if(B.bristle){                                 /* boar's ridge */
+    const r=box(.06,B.high*.20,B.len*.62,D); r.position.set(0,y+B.high*.30,-.02); g.add(r);
+  }
+  const nz=B.len*0.52;
+  const neck=box(B.wid*.56,B.high*.34,B.high*.30,M);
+  neck.position.set(0,y+B.high*.16,nz); neck.rotation.x=-.30; g.add(neck);
+  const hy=y+(kind==='wolf'?B.high*.16:B.high*.26);
+  const head=box(B.head,B.head*.86,B.head*1.15,M); head.position.set(0,hy,nz+B.head*.55); g.add(head);
+  const sn=box(B.head*.62,B.head*.52,B.snout,D);
+  sn.position.set(0,hy-B.head*.14,nz+B.head*.95+B.snout*.35); g.add(sn);
+  for(const sx of [-1,1]){
+    const e=box(.07,B.ears==='up'?.16:.08,B.ears==='up'?.07:.14,D);
+    const ez=B.ears==='back'? nz+B.head*.10 : nz+B.head*.40;
+    e.position.set(sx*B.head*.42, hy+B.head*(B.ears==='up'?.62:.36), ez); g.add(e);
+    if(B.horns){ const h=box(.05,.05,.22,D);
+      h.position.set(sx*B.head*.46,hy+B.head*.44,nz+B.head*.50); h.rotation.y=sx*.5; g.add(h); }
+    if(B.tusks){ const t=box(.04,.10,.05,0xdad2be&&new THREE.MeshLambertMaterial({color:0xdad2be}));
+      t.position.set(sx*B.head*.24,hy-B.head*.26,nz+B.head*1.0+B.snout*.5); t.rotation.x=-.5; g.add(t); }
+  }
+  const tz=-B.len*0.55;
+  if(B.tail==='long'){ const t=box(.07,B.high*.52,.07,D); t.position.set(0,y,tz); t.rotation.x=.35; g.add(t); }
+  else if(B.tail==='brush'){ const t=box(.13,.13,B.len*.42,D); t.position.set(0,y+.04,tz-B.len*.16); t.rotation.x=-.30; g.add(t); }
+  else { const t=box(.09,.11,.09,D); t.position.set(0,y+B.high*.16,tz); g.add(t); }
+  for(const [sx,sz] of [[-1,1],[1,1],[-1,-1],[1,-1]]){
+    const hip=new THREE.Group(); hip.position.set(sx*B.wid*.34,y-B.high*.22,sz*B.len*.32); g.add(hip);
+    const up=box(.12,B.legs*.55,.13,M); up.position.y=-B.legs*.28; hip.add(up);
+    const lo=box(.10,B.legs*.55,.11,M); lo.position.y=-B.legs*.72; hip.add(lo);
+    const hoof=box(.12,.08,.13,D); hoof.position.y=-B.legs; hip.add(hoof);
+    legs.push({hip,phase:(sz>0?0:Math.PI)+(sx>0?Math.PI:0)});
+  }
+  g.userData.legs=legs;
+  return g;
+}
 function makeHorse(col,dark){
   const M=new THREE.MeshLambertMaterial({color:col});
   const D=new THREE.MeshLambertMaterial({color:dark||0x000000});
@@ -334,6 +393,54 @@ window.__bake=async function(cfg){
    its own alpha so the game can anchor it at the footprint centre. */
 const TW=64, TH=32;
 function cv(w,h){const c=document.createElement('canvas');c.width=w;c.height=h;return [c,c.getContext('2d',{willReadFrequently:true})];}
+/* Wildlife. No skinned rig on these, so they get their own loop: legs swing off
+   the walk phase the way the mount already does, and the death frames tip the
+   body over. Same sheet layout as the units, so the game draws them through the
+   path it already has. */
+window.__bakeBeast=async function(cfg){
+  const g=makeBeast(cfg.kind);
+  scene.add(g); g.updateMatrixWorld(true);
+  const bb=new THREE.Box3().setFromObject(g);
+  const H=bb.max.y-bb.min.y;
+  g.position.y=-bb.min.y; g.updateMatrixWorld(true);
+
+  placeCam(H*1.15*(cfg.zoom||1), H*0.52);
+  cam.updateMatrixWorld(true);
+  const o=new THREE.Vector3(0,0,0).project(cam);
+  const anchor={x:(o.x*0.5+0.5)*FW, y:(-o.y*0.5+0.5)*FH};
+
+  const states=[{name:'idle',n:2},{name:'walk',n:6},{name:'die',n:4}];
+  const total=states.reduce((a,s)=>a+s.n,0);
+  const sheet=document.createElement('canvas');
+  sheet.width=FW*total; sheet.height=FH*5;
+  const sx=sheet.getContext('2d');
+  const YAWS=[45,90,135,180,225];
+  let col=0; const layout=[];
+  for(const st of states){
+    layout.push({name:st.name,start:col,n:st.n});
+    for(let f=0;f<st.n;f++){
+      const ph=(f/st.n)*Math.PI*2;
+      let swing=0, bob=0, roll=0, sink=0;
+      if(st.name==='walk'){ swing=0.55; bob=Math.abs(Math.sin(ph))*H*0.025; }
+      else if(st.name==='idle'){ swing=0.05; bob=Math.sin(ph)*H*0.006; }
+      else { const k=f/(st.n-1); roll=k*Math.PI*0.46; sink=-k*H*0.16; }
+      for(const L of g.userData.legs)
+        L.hip.rotation.x = st.name==='die' ? -roll*0.5 : Math.sin(ph+L.phase)*swing;
+      for(let d=0;d<5;d++){
+        g.rotation.set(0,(YAWS[d]+(cfg.yawOffset||0))*Math.PI/180,roll);
+        g.position.y=-bb.min.y+bob+sink;
+        g.updateMatrixWorld(true);
+        renderer.render(scene,cam);
+        sx.drawImage(renderer.domElement,(col+f)*FW,d*FH);
+      }
+    }
+    col+=st.n;
+  }
+  scene.remove(g);
+  return {png:sheet.toDataURL('image/png'),fw:FW,fh:FH,frames:total,
+          anchor:{x:+anchor.x.toFixed(2),y:+anchor.y.toFixed(2)},states:layout};
+};
+
 window.__bakeProp=async function(cfg){
   const gltf=await load('./glb/'+cfg.mesh);
   const root=gltf.scene;

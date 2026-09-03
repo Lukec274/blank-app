@@ -191,6 +191,20 @@ const srv=http.createServer((q,s)=>{
     await br.close(); srv.close(); return;
   }
 
+  /* --beasts: the wildlife, which has no skinned rig and bakes procedurally */
+  if(process.argv[2]==='--beasts'){
+    const MF=path.join(OUT,'units.json');
+    const manifest=fs.existsSync(MF)?JSON.parse(fs.readFileSync(MF,'utf8')):{};
+    for(const kind of ['sheep','cattle','boar','wolf']){
+      const r=await page.evaluate(k=>window.__bakeBeast({kind:k,yawOffset:180,zoom:0.86}),kind);
+      fs.writeFileSync(path.join(OUT,kind+'.png'),Buffer.from(r.png.split(',')[1],'base64'));
+      manifest[kind]={fw:r.fw,fh:r.fh,frames:r.frames,anchor:r.anchor,states:r.states};
+      console.log(kind.padEnd(9),(r.png.length*0.75/1024|0)+'KB',r.frames+' frames');
+    }
+    fs.writeFileSync(MF,JSON.stringify(manifest,null,1));
+    await br.close(); srv.close(); return;
+  }
+
   const only=process.argv[2];
   /* a single-unit bake must not drop the other units out of the manifest */
   const MF=path.join(OUT,'units.json');

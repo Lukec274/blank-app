@@ -401,5 +401,109 @@
     "dur": 0.8
    }
   ]
+ },
+ "sheep": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 12,
+  "anchor": {
+   "x": 36,
+   "y": 60.02
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6
+   },
+   {
+    "name": "die",
+    "start": 8,
+    "n": 4
+   }
+  ]
+ },
+ "cattle": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 12,
+  "anchor": {
+   "x": 36,
+   "y": 60.15
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6
+   },
+   {
+    "name": "die",
+    "start": 8,
+    "n": 4
+   }
+  ]
+ },
+ "boar": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 12,
+  "anchor": {
+   "x": 36,
+   "y": 60
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6
+   },
+   {
+    "name": "die",
+    "start": 8,
+    "n": 4
+   }
+  ]
+ },
+ "wolf": {
+  "fw": 72,
+  "fh": 82,
+  "frames": 12,
+  "anchor": {
+   "x": 36,
+   "y": 60.06
+  },
+  "states": [
+   {
+    "name": "idle",
+    "start": 0,
+    "n": 2
+   },
+   {
+    "name": "walk",
+    "start": 2,
+    "n": 6
+   },
+   {
+    "name": "die",
+    "start": 8,
+    "n": 4
+   }
+  ]
  }
 }
