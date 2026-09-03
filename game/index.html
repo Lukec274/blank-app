@@ -1754,6 +1754,17 @@ function damage(tgt,amt,src){
   if(!tgt.alive)return;
   tgt.hp-=amt; tgt.hitT=0.32;
   if(tgt.owner===G.human.id) alertUnderAttack(tgt);
+  /* Fight back. Without this a unit shot while walking just kept walking, which
+     is what made a marching army look like it was ignoring the enemy. Units held
+     on passive, and villagers, still run their orders. */
+  if(tgt.type==='u'&&tgt.alive&&src&&src.alive&&tgt.stance!=='pass'&&
+     tgt.kind!=='villager'&&(!tgt.target||!tgt.target.alive)){
+    const tk=tgt.task&&tgt.task.kind;
+    if(!tk||tk==='move'||tk==='amove'||tk==='patrol'){
+      if(tk==='amove'&&tgt.task)tgt.amove={x:tgt.task.x,y:tgt.task.y};
+      tgt.target=src; tgt.task={kind:'attack'}; tgt.state='attack'; tgt.path=null;
+    }
+  }
   if(tgt.hp<=0){
     if(src&&G.players[src.owner])G.players[src.owner].stats.killed++;
     if(tgt.type==='u')sfx('die'); else sfx('crumble');
@@ -1881,10 +1892,53 @@ function cmdAttack(units,tgt){
     u.task={kind:'attack'};u.target=tgt;u.state='attack';u.path=null;u.flow=null;
   }
 }
+/* When a node runs out, find the villager the same work again instead of
+   dropping them to idle. A worked-out farm looks for another farm with room --
+   only the villager who took the last food used to reseed, and the rest just
+   stopped. */
+function nextGatherTarget(u,r){
+  const p=G.players[u.owner];
+  if(r.type==='b'){
+    let best=null,bd=Infinity;
+    for(const b of G.blds){
+      if(b.owner!==p.id||b.kind!=='farm'||!b.alive||b.built<1||b.food<=0)continue;
+      if(workersOn(p,b)>=RES_CAP.f)continue;
+      const d=dist2(u.x,u.y,b.x,b.y); if(d<bd){bd=d;best=b;}
+    }
+    if(best)return best;
+    return findResFree(p,u.x,u.y,'berry',20,RES_CAP.f)||findRes(u.x,u.y,'berry',20);
+  }
+  return findResFree(p,u.x,u.y,r.kind,18,RES_CAP[r.kind]||3)||findRes(u.x,u.y,r.kind,18);
+}
+
+/* how many villagers can usefully work one node before they just queue up */
+const RES_CAP={f:4,w:3,g:3,s:3};
 function cmdGather(units,r){
-  for(const u of units){
-    if(u.kind!=='villager')continue;
-    u.task={kind:'gather'};u.target=r;u.state='gather';u.path=null;u.flow=null;
+  const vil=units.filter(u=>u.kind==='villager');
+  if(!vil.length)return;
+  const p=G.players[vil[0].owner];
+  /* Farms and drop-off buildings are a single spot; only field resources spread.
+     Sending the whole group at the one tapped node made them pile up on it and
+     forced you to re-order them one at a time. */
+  const spread = r.type==='r';
+  const cap = spread ? (RES_CAP[r.kind]||3) : Infinity;
+  const claimed=new Map();
+  const held=(n)=>claimed.has(n)?claimed.get(n):workersOn(p,n);
+  const take=(n)=>claimed.set(n,held(n)+1);
+  for(const u of vil){
+    let node=r;
+    if(spread&&held(r)>=cap){
+      /* nearest node of the same kind that still has room, else share the tapped one */
+      let best=null,bd=Infinity;
+      for(const c of G.res){
+        if(c.kind!==r.kind||c.amt<=0||held(c)>=cap)continue;
+        const d=dist2(r.x,r.y,c.x,c.y);
+        if(d<bd){bd=d;best=c;}
+      }
+      if(best)node=best;
+    }
+    take(node);
+    u.task={kind:'gather'};u.target=node;u.state='gather';u.path=null;u.flow=null;
   }
 }
 function cmdBuildAt(units,b,queue){
@@ -1961,10 +2015,12 @@ function updateUnit(u,dt){
   const t=u.task;
   /* passive target acquisition */
   u.acqT=(u.acqT||0)-dt;
-  if(u.stance!=='pass' && (!t || t.kind==='move'&&!u.path || t.kind==='amove') && u.kind!=='villager' && u.kind!=='monk'){
+  if(u.stance!=='pass' && (!t || t.kind==='move' || t.kind==='amove') && u.kind!=='villager' && u.kind!=='monk'){
     if((!u.target||!u.target.alive)&&u.acqT<=0){
       u.acqT=0.35+rnd()*0.2;
-      const r = t&&t.kind==='amove'? u.st.rng+5 : (u.st.rng>2? u.st.rng+2.5 : 4.5);
+      const r = t&&t.kind==='amove'? u.st.rng+5
+              : (t&&t.kind==='move'&&u.path)? (u.st.rng>2? u.st.rng+1 : 2.6)
+              : (u.st.rng>2? u.st.rng+2.5 : 4.5);
       const e=findEnemyNear(u,r);
       if(e){
         u.target=e;
@@ -2010,8 +2066,7 @@ function updateUnit(u,dt){
     case 'gather': {
       const r=u.target;
       if(!r||(r.type==='r'&&r.amt<=0)||(r.type==='b'&&(!r.alive||r.food<=0))){
-        const kind=u.carryType;
-        const next = r? findRes(u.x,u.y, r.type==='r'? r.kind : 'x', 14) : null;
+        const next = r? nextGatherTarget(u,r) : null;
         if(next){u.target=next;}
         else if(u.carry>0){u.task={kind:'return'};}
         else {u.task=null;u.state='idle';}
@@ -3567,7 +3622,10 @@ function pointerEnd(e){
     if(units.length&&e2.type==='b'&&(e2.built<1||e2.hp<e2.maxHp||(e2.kind==='farm'&&e2.food>0))){ issueOrder(p.x,p.y); return; }
     selectEnt(e2,false); return;
   }
-  if(selectedUnits().length||selectedBld()){ issueOrder(p.x,p.y); return; }
+  if(selectedUnits().length||selectedBld()){
+    if(!e2&&dbl){ clearSelection(); return; }   /* double-tap bare ground drops the selection */
+    issueOrder(p.x,p.y); return;
+  }
   selectEnt(e2,false);
 }
 cvs.addEventListener('pointerup',pointerEnd);
@@ -3928,10 +3986,16 @@ function refreshHUD(force){
       const t=document.createElement('div');t.className='t';t.textContent=c.t;el.appendChild(t);
       if(c.cost){const s=document.createElement('div');s.className='c';s.textContent=costStr(c.cost);el.appendChild(s);}
       if(c.on)el.classList.add('on');
-      el.addEventListener('pointerdown',(ev)=>{ev.stopPropagation();audioInit();});
-      el.addEventListener('click',(ev)=>{ev.stopPropagation();
+      /* Fire on pointerdown, not click. This grid is rebuilt whenever its
+         signature changes -- and that includes the queue length, so a unit
+         finishing training while your finger is down destroyed the element
+         mid-tap and the click never landed. Acting on the way down also just
+         feels better in a game. */
+      el.addEventListener('pointerdown',(ev)=>{
+        ev.preventDefault(); ev.stopPropagation(); audioInit();
         if(c.dis&&c.dis()){ if(c.cost)needRes(c.cost); else sfx('deny'); return; }
         sfx('tap'); c.act();});
+      el.addEventListener('click',(ev)=>ev.stopPropagation());
       host.appendChild(el);
       c.el=el;
     });
@@ -4307,7 +4371,9 @@ $('btnSel').onclick=(e)=>{e.stopPropagation();audioInit();sfx('tap');
   INP.selMode=!INP.selMode;
   $('btnSel').classList.toggle('on',INP.selMode);
   toast(INP.selMode?'Drag to select — tap again for pan':'Drag pans the map');};
-$('selClear').onclick=(e)=>{e.stopPropagation();sfx('tap');clearSelection();};
+$('selClear').addEventListener('pointerdown',(e)=>{
+  e.preventDefault();e.stopPropagation();sfx('tap');clearSelection();});
+$('selClear').addEventListener('click',(e)=>e.stopPropagation());
 
 /* ============================================================
    MAIN LOOP
