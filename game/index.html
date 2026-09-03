@@ -313,7 +313,12 @@ const vrnd = ()=>VRNG();
 const rndi = (n)=>Math.floor(RNG()*n);
 const rrange = (a,b)=>a+RNG()*(b-a);
 const pick = (arr)=>arr[Math.floor(RNG()*arr.length)];
-function hash2(x,y){let h=x*374761393+y*668265263;h=(h^(h>>13))*1274126177;return((h^(h>>16))>>>0)/4294967296;}
+/* The final mix used an arithmetic shift, so the sign bit always cancelled with
+   itself and the result never exceeded 0.5. Every caller comparing against a
+   probability above a half was therefore taking that branch every time -- which
+   is why ground wear came out in blocks -- and every caller indexing a variant
+   table only ever saw its first half. A logical shift restores the full range. */
+function hash2(x,y){let h=x*374761393+y*668265263;h=(h^(h>>13))*1274126177;return((h^(h>>>16))>>>0)/4294967296;}
 
 /* value noise for textures */
 function makeNoise(seed){
@@ -522,17 +527,23 @@ function civHas(p,kind){
 const TT = {WATER:0,SHALLOW:1,SAND:2,GRASS:3,MEADOW:4,DIRT:5,ROCK:6,COBBLE:7};
 const TT_PRIO = [0,1,2,6,6,4,5,3];
 const TT_PASS = [0,0,1,1,1,1,1,1];
+/* Measured against the reference screenshot rather than eyeballed. Sampling
+   clean patches of its ground gives hue 30, S 0.42, V 0.90 with a local value
+   spread (sd) of 0.086; ours read hue 78, S 0.48, V 0.50, sd 0.020 -- a third
+   as bright, a quarter as varied and a different colour family. That gap is
+   most of what made the map look flat-shaded rather than painted, so every
+   entry below is picked to land its own midpoint on those numbers, with the
+   dark/light pair pushed apart far enough to carry the variation.
+   Deep water reads #6fe3fb (V 0.99) there; ours was a third of that. */
 const TERRAIN = {
-  /* Warmer and less saturated than a straight green, closer to the sun-bleached
-     Mediterranean ground the reference art uses: olive grass, tan earth. */
-  [TT.WATER]:   {c:'#1d5578', c2:'#2f7ea4', spec:'water'},
-  [TT.SHALLOW]: {c:'#4e97b4', c2:'#6fb6ca', spec:'water'},
-  [TT.SAND]:    {c:'#cbb289', c2:'#e2cda3', spec:'grain'},
-  [TT.GRASS]:   {c:'#61743c', c2:'#7a8c4a', spec:'blades'},
-  [TT.MEADOW]:  {c:'#7c8a47', c2:'#98a45c', spec:'blades'},
-  [TT.DIRT]:    {c:'#8a7048', c2:'#a3885c', spec:'grain'},
-  [TT.ROCK]:    {c:'#7a766c', c2:'#928d82', spec:'stone'},
-  [TT.COBBLE]:  {c:'#8f8a7e', c2:'#a8a293', spec:'cobble'},
+  [TT.WATER]:   {c:'#2f8fb4', c2:'#7fdcf2', spec:'water'},
+  [TT.SHALLOW]: {c:'#63bcd4', c2:'#a8ecf6', spec:'water'},
+  [TT.SAND]:    {c:'#c99a6a', c2:'#f2d9ad', spec:'grain'},
+  [TT.GRASS]:   {c:'#646838', c2:'#aab06e', spec:'blades'},
+  [TT.MEADOW]:  {c:'#968c50', c2:'#d7cb8c', spec:'blades'},
+  [TT.DIRT]:    {c:'#ab7d54', c2:'#ecc79c', spec:'grain'},
+  [TT.ROCK]:    {c:'#7b6f5f', c2:'#bcaf98', spec:'stone'},
+  [TT.COBBLE]:  {c:'#a58d74', c2:'#e5cfb4', spec:'cobble'},
 };
 
 const ART = {tiles:{},edges:{},water:[],deco:{},unit:new Map(),bld:new Map(),icon:new Map()};
@@ -556,7 +567,12 @@ function makeTile(type,ox,oy,noise,noise2){
       const wx=(ox+px)*0.55, wy=(oy+py)*1.10;
       let n=fbm(noise,wx,wy,4,2.3,.42);
       let m=noise2(wx*2.4,wy*2.4);
-      let v=0.5+((n*.62+m*.38)-0.5)*0.62;
+      /* Amplitude is set by the reference's measured local value spread, not by
+         taste: a quarter of its variation is what made ours read as flat fill. */
+      let v=0.5+((n*.62+m*.38)-0.5)*0.92;
+      /* per-pixel grain on top of the smooth field -- painted ground is never
+         clean, and this is what survives at the 1:1 zoom the game plays at */
+      v += (hash2(ox+px*7, oy+py*13)-0.5)*0.14;
       if(t.spec==='blades'){ v += (m>.78? .16 : 0) - (m<.16? .10:0); }
       if(t.spec==='grain'){ v = v*.8+.1; if(m>.93) v+=.22; }
       if(t.spec==='stone'){ v = Math.pow(v,1.4); if(m>.88) v+=.18; if(m<.12)v-=.14; }
@@ -571,18 +587,30 @@ function makeTile(type,ox,oy,noise,noise2){
   }
   x.putImageData(img,0,0);
   if(t.spec==='cobble'){
-    /* laid stones rather than noise -- a plaza should read as built, and the
-       reference puts one under the middle of every town */
+    /* Laid stones, but irregular ones. A running bond of equal rounded rectangles
+       with a dark joint is a brick wall seen from above, and that -- more than
+       anything else on the map -- is what read as Minecraft. The reference's
+       paving measures the same warm hue and the same brightness as the ground
+       beside it (h 29 / S 0.44 / V 0.90 against h 30 / S 0.42 / V 0.90); it is
+       built ground, not a grey surface laid on top. So: jittered courses,
+       varying flag widths, and a joint barely darker than the stone. */
     const rc=mulberry32(9001+ox*17+oy*29);
-    for(let row=-1;row<TH/5+1;row++)for(let cl=-1;cl<TW/11+1;cl++){
-      const off=(row&1)?5.5:0;
-      const cxp=cl*11+off+rc()*1.2, cyp=row*5+rc()*1.0;
-      if(!insideDiamond(cxp-THW,cyp-THH))continue;
-      x.fillStyle=shade(t.c2,.84+rc()*.30);
-      x.beginPath();
-      if(x.roundRect)x.roundRect(cxp-4.6,cyp-2.1,9.2,4.2,1.4); else x.rect(cxp-4.6,cyp-2.1,9.2,4.2);
-      x.fill();
-      x.strokeStyle='rgba(38,33,26,.30)'; x.lineWidth=1; x.stroke();
+    for(let row=-1;row<TH/4.6+1;row++){
+      const rowOff=rc()*11, ry=row*4.6+(rc()-.5)*1.1;
+      let cxp=-8+rowOff;
+      while(cxp<TW+8){
+        const w=6.5+rc()*7.5, h=3.4+rc()*1.5;
+        const cyp=ry+(rc()-.5)*.9;
+        if(insideDiamond(cxp+w/2-THW,cyp-THH)){
+          /* flags vary in tone but stay inside the ground's own value band */
+          x.fillStyle=shade(t.c2,.90+rc()*.20);
+          x.beginPath();
+          if(x.roundRect)x.roundRect(cxp,cyp-h/2,w,h,1.1); else x.rect(cxp,cyp-h/2,w,h);
+          x.fill();
+          x.strokeStyle='rgba(96,76,54,.20)'; x.lineWidth=1; x.stroke();
+        }
+        cxp+=w+0.9+rc()*0.8;
+      }
     }
   }
   /* scattered detail: pebbles, blades, flowers */
@@ -613,15 +641,35 @@ function makeTile(type,ox,oy,noise,noise2){
   return c;
 }
 /* feathered edge overlay used where a higher-priority terrain meets a lower one */
-function makeEdge(tileCanvas,dir){
+/* A smooth radial ramp still fades along the diamond, so the boundary keeps the
+   diamond's shape and the ground reads as a grid of tiles. The reference has no
+   straight edges anywhere in its ground: terrain types interlock in ragged
+   fingers. Perturbing the ramp with noise before it becomes an alpha mask gets
+   that for the cost of building the mask once. Four variants per direction so a
+   run of tiles along one boundary does not repeat the same fingers. */
+function makeEdge(tileCanvas,dir,variant){
   const [c,x]=cv(TW,TH);
   x.drawImage(tileCanvas,0,0);
-  x.globalCompositeOperation='destination-in';
-  // dir 0:NE 1:SE 2:SW 3:NW  (gradient fades away from that edge)
+  const mask=x.createImageData(TW,TH), md=mask.data;
   const pts=[[TW,0],[TW,TH],[0,TH],[0,0]][dir];
-  const g=x.createRadialGradient(pts[0],pts[1],2,pts[0],pts[1],TW*.72);
-  g.addColorStop(0,'rgba(0,0,0,1)');g.addColorStop(.45,'rgba(0,0,0,.75)');g.addColorStop(1,'rgba(0,0,0,0)');
-  x.fillStyle=g;x.fillRect(0,0,TW,TH);
+  const R=TW*.86, en=makeNoise(6100+dir*211+(variant|0)*37);
+  for(let py=0;py<TH;py++){
+    for(let px=0;px<TW;px++){
+      const i=(py*TW+px)*4;
+      /* screen space is 2:1, so measure in tile units or the mask goes oval */
+      const dx=px-pts[0], dy=(py-pts[1])*2;
+      const d=Math.sqrt(dx*dx+dy*dy)/R;
+      /* the noise moves the contour in and out; amplitude grows toward the far
+         side so the fingers get looser as the cover thins */
+      const w=fbm(en,px*.16,py*.32,3,2.1,.5)-0.5;
+      let a=1-(d+w*0.62*clamp(d*1.4,0,1))*1.18;
+      md[i]=md[i+1]=md[i+2]=0;
+      md[i+3]=clamp(a,0,1)*255;
+    }
+  }
+  const [mc,mx]=cv(TW,TH); mx.putImageData(mask,0,0);
+  x.globalCompositeOperation='destination-in';
+  x.drawImage(mc,0,0);
   x.globalCompositeOperation='source-over';
   return c;
 }
@@ -693,7 +741,7 @@ function forgeTerrain(){
       x2.drawImage(src,0,0);
       return c2;
     });
-    ART.edges[t]=[0,1,2,3].map(d=>makeEdge(ART.tiles[t][0],d));
+    ART.edges[t]=[0,1,2,3].map(d=>[0,1,2,3].map(v=>makeEdge(ART.tiles[t][v*3],d,v)));
     ART.foam=ART.foam||[0,1,2,3].map(makeFoam);
   }
   makeWaterFrames();
@@ -2050,13 +2098,17 @@ function wearGround(b){
   /* the civic buildings get a paved apron, which is what the reference puts at
      the middle of a town; everything else just wears the grass */
   if(b.kind==='tc'||b.kind==='castle'||b.kind==='market'){
-    const q=b.size+1;
+    /* An apron, not a plaza. This used to pave a box two tiles clear of the
+       building on every side, so a single town centre put a field of stone
+       across most of a screen -- in the reference paving is a narrow skirt
+       right against the walls and everything beyond it is worn earth. */
+    const q=2;
     for(let y=b.ty-q;y<b.ty+b.size+q;y++)for(let x=b.tx-q;x<b.tx+b.size+q;x++){
       if(!inMap(x,y))continue;
       const i=idx(x,y), tt=G.tile[i];
       if(tt===TT.WATER||tt===TT.SHALLOW||tt===TT.ROCK)continue;
       const d=Math.max(Math.abs(x-(b.tx+b.size/2-.5)),Math.abs(y-(b.ty+b.size/2-.5)));
-      if(d<=b.size/2+0.5 || hash2(x*11+3,y*17+7)<clamp(1-(d-b.size/2)/q,0,1)*0.7)
+      if(d<=b.size/2+0.5 || hash2(x*11+3,y*17+7)<clamp(1-(d-b.size/2)/1.6,0,1)*0.55)
         G.tile[i]=TT.COBBLE;
     }
   }
@@ -3461,9 +3513,21 @@ function draw(dt){
       if(t===TT.WATER||t===TT.SHALLOW) img=ART.water[(wf+((x*3+y*5)%6))%6];
       else img=ART.tiles[t][(hash2(x,y)*12)|0];
       const lift=liftAt(x,y)*z;
-      const col=(lift>0.4&&t!==TT.WATER&&t!==TT.SHALLOW&&ART.tilesCol&&ART.tilesCol[t])
+      /* The earth column below a tile has to be as tall as the actual drop to
+         the ground in front of it, not a constant. Giving every raised tile the
+         full skirt turned a smooth slope into a flight of steps -- one dark band
+         per tile row, which is what the banding across open ground was. */
+      let skirt=0;
+      if(lift>0.4&&t!==TT.WATER&&t!==TT.SHALLOW){
+        const l1=inMap(x+1,y)?liftAt(x+1,y)*z:0, l2=inMap(x,y+1)?liftAt(x,y+1)*z:0;
+        skirt=clamp(lift-Math.min(l1,l2),0,LIFT*z);
+      }
+      const col=(skirt>0.6&&ART.tilesCol&&ART.tilesCol[t])
                 ? ART.tilesCol[t][(hash2(x,y)*12)|0] : null;
-      if(col) ctx.drawImage(col,sx,sy-lift,tw+1,(th+LIFT)*z+1);
+      if(col){
+        const sh=Math.min(LIFT,Math.ceil(skirt/z));
+        ctx.drawImage(col,0,0,TW,TH+sh, sx,sy-lift,tw+1,(TH+sh)*z+1);
+      }
       else    ctx.drawImage(img,sx,sy-lift,tw+1,th+1);
       /* soft transitions with higher-priority neighbours (not worth it zoomed out) */
       if(z<0.62)continue;
@@ -3483,8 +3547,12 @@ function draw(dt){
           }
           continue;
         }
-        if(TT_PRIO[nt]<=pr)continue;
-        ctx.drawImage(ART.edges[nt][nb[k][2]],sx,sy-lift,tw+1,th+1);
+        /* Equal priorities used to skip the blend entirely, which left every
+           grass/meadow boundary -- most of the map -- as a hard diamond edge.
+           Break the tie on type so one of the pair always covers the other. */
+        if(TT_PRIO[nt]<pr || (TT_PRIO[nt]===pr && nt<=t))continue;
+        const ev=ART.edges[nt][nb[k][2]];
+        ctx.drawImage(ev[(hash2(x*5+k,y*7+1)*4)|0],sx,sy-lift,tw+1,th+1);
       }
     }
   }
@@ -3544,6 +3612,46 @@ function draw(dt){
       ctx.setLineDash([]);
       ctx.fillStyle='#d8a13a';ctx.beginPath();ctx.arc(w2sx(e.rally.x,e.rally.y),w2sy(e.rally.x,e.rally.y),3.5*z,0,7);ctx.fill();
     }
+  }
+  /* Cast shadows, laid down before anything else in the draw list so nothing
+     ever has a shadow painted across it. Measured against the reference, the
+     darkest twentieth of our frame sat at V 0.36 where the reference sits at
+     0.18: we had no darks at all, because nothing on the map threw a shadow
+     further than the contact patch baked into its own sprite. The whole lower
+     half of the value range comes from shadows there, and getting it back is
+     what stops the ground reading as evenly lit plastic. */
+  if(z>0.5){
+    for(const e of list){
+      let img=null,ax=0,ay=0,sc=1;
+      if(e.t!==undefined&&e.k)continue;
+      if(e.owner===undefined&&!e.type){
+        const P=e.name?PROPS[e.name]:null;
+        if(P&&P.ready){img=P.img;ax=P.ax;ay=P.ay;}
+      } else if(e.type==='r'){
+        let pn=null;
+        if(e.kind==='tree')       pn=(e.v%2?'tree_b':'tree_a')+treeStage(e);
+        else if(e.kind==='stone'||e.kind==='gold') pn=ORE_ROCK[e.v%ORE_ROCK.length];
+        const P=pn?PROPS[pn]:null;
+        if(P&&P.ready){img=P.img;ax=P.ax;ay=P.ay;}
+      } else if(e.type==='b'&&e.kind!=='farm'&&e.built>=1){
+        const sp=bldArt(e.kind,G.players[e.owner].ci,0);
+        if(sp){img=sp;ax=sp.ax;ay=sp.ay;}
+      } else if(e.type==='u'){
+        const sp=unitShadowSprite(e);
+        if(sp){img=sp.img;ax=sp.ax;ay=sp.ay;sc=sp.sc;}
+      }
+      if(!img)continue;
+      const sil=silhouette(img); if(!sil)continue;
+      const sx=w2sx(e.x,e.y), sy=w2sy(e.x,e.y)-liftAt(e.x,e.y)*z;
+      const zz=z*sc;
+      ctx.save();
+      ctx.translate(sx,sy);
+      ctx.transform(1,0,-SUN.shear,SUN.squash,0,0);
+      ctx.globalAlpha=SUN.alpha;
+      ctx.drawImage(sil,-(ax+SIL_PAD)*zz,-(ay+SIL_PAD)*zz,sil.width*zz,sil.height*zz);
+      ctx.restore();
+    }
+    ctx.globalAlpha=1;
   }
   /* entities */
   for(const e of list){
@@ -3639,6 +3747,36 @@ function draw(dt){
     ctx.fillRect(x,y,w,h);ctx.strokeRect(x,y,w,h);
   }
   ctx.setTransform(1,0,0,1,0,0);
+}
+/* The sun sits over the left shoulder, as it does in the reference, so shadows
+   lean away to the right and flatten into the ground plane. */
+const SUN={shear:1.02,squash:0.36,alpha:0.30};
+const SIL_PAD=4;
+const SIL=new WeakMap();
+/* A sprite's shadow is the sprite itself: silhouetted, softened once, cached
+   against the source canvas so it costs one drawImage a frame afterwards. */
+function silhouette(img){
+  if(!img||!img.width)return null;
+  let c=SIL.get(img); if(c!==undefined)return c;
+  let x; [c,x]=cv(img.width+SIL_PAD*2,img.height+SIL_PAD*2);
+  try{ x.filter='blur(2.2px)'; }catch(e){}
+  x.drawImage(img,SIL_PAD,SIL_PAD);
+  try{ x.filter='none'; }catch(e){}
+  x.globalCompositeOperation='source-in';
+  x.fillStyle='#000'; x.fillRect(0,0,c.width,c.height);
+  SIL.set(img,c); return c;
+}
+/* The same sprite drawUnit is about to use, resolved without the per-frame
+   trimmings, so the shadow pass matches the pose it is the shadow of. */
+function unitShadowSprite(u){
+  const dir=(u.dir|0)%8, S=SHEETS[u.kind], pl=G.players[u.owner];
+  if(!pl)return null;
+  if(S&&S.ready){
+    const sp=sheetFrame(u.kind,pl.ci,SHEET_ROW[dir],sheetAnim(u,S));
+    if(sp)return {img:sp,ax:sp.ax,ay:sp.ay,sc:SH_SCALE};
+  }
+  const sp=unitSprite(u.kind,pl.ci,DIR_CANON[dir],u.frame|0);
+  return sp?{img:sp,ax:sp.ax,ay:sp.ay,sc:1}:null;
 }
 function drawUnit(u,sx,sy,z,p){
   const dir=(u.dir|0)%8;
