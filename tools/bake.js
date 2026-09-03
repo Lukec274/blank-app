@@ -42,6 +42,15 @@ const S={
    plot. Baked from the blue set; ownership comes from the pennant propSprite
    composites on top, as it already does for the houses. */
 const PROPS={
+  /* shoreline and high ground */
+  water_lily_a:{mesh:'waterlily_A.gltf',  px:120},
+  water_lily_b:{mesh:'waterlily_B.gltf',  px:120},
+  reed_a:      {mesh:'waterplant_A.gltf', px:95},
+  reed_b:      {mesh:'waterplant_B.gltf', px:95},
+  reed_c:      {mesh:'waterplant_C.gltf', px:95},
+  hill_a:      {mesh:'hill_single_A.gltf',px:78},
+  hill_b:      {mesh:'hill_single_B.gltf',px:78},
+  hill_c:      {mesh:'hill_single_C.gltf',px:78},
   /* town clutter -- what makes a settlement look lived in rather than placed */
   dec_barrel:{mesh:'barrel.gltf', px:52},
   dec_crate_a_big:{mesh:'crate_A_big.gltf', px:52},
