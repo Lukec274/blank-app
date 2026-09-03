@@ -330,11 +330,22 @@ window.__bake=async function(cfg){
     const headFrac=(box3.max.y-hy)/height;
     fit=height*(1-(1-cfg.headScale)*headFrac);
   }
-  const cy=box3.min.y+fit*(cfg.mount?0.60:0.46);
-  placeCam(fit*(cfg.mount?1.02:0.80)*(cfg.zoom||1), cy);
+  /* A rider is measured at the origin and only afterwards lifted onto the horse,
+     so framing on that box alone ignored everything the horse adds underneath
+     and clipped the rider's head off the top of every mounted frame. Measure
+     the pair together once they are actually assembled. */
+  let ground=box3.min.y;
+  if(cfg.mount&&horse){
+    const mb=new THREE.Box3().setFromObject(horse);
+    mb.union(new THREE.Box3().setFromObject(root));
+    ground=mb.min.y;
+    fit=mb.max.y-mb.min.y;
+  }
+  const cy=ground+fit*(cfg.mount?0.50:0.46);
+  placeCam(fit*(cfg.mount?0.60:0.80)*(cfg.zoom||1), cy);
   cam.updateMatrixWorld(true);
   /* where the feet land in the frame — the game anchors sprites here */
-  const o=new THREE.Vector3(0,box3.min.y,0).project(cam);
+  const o=new THREE.Vector3(0,ground,0).project(cam);
   const anchor={x:(o.x*0.5+0.5)*FW, y:(-o.y*0.5+0.5)*FH};
 
   /* lay every state out on one sheet: rows = facing, cols = frame */
@@ -448,6 +459,10 @@ window.__bakeProp=async function(cfg){
   root.traverse(o=>{ if(o.isMesh){o.frustumCulled=false;
     if(cfg.hide&&cfg.hide.some(h=>o.name.indexOf(h)>=0))o.visible=false; } });
 
+  /* a named sub-node that turns, baked as a strip of frames the game cycles */
+  let spinNode=null;
+  if(cfg.spin){ root.traverse(o=>{ if(o.name===cfg.spin.node)spinNode=o; }); }
+
   let box=new THREE.Box3().setFromObject(root);
   /* sit it on the origin: footprint centred, base at y=0 */
   root.position.set(-(box.min.x+box.max.x)/2, -box.min.y, -(box.min.z+box.max.z)/2);
@@ -464,24 +479,33 @@ window.__bakeProp=async function(cfg){
   cam.lookAt(0,(box.max.y-box.min.y)*0.42,0);
   cam.left=-W/(2*k); cam.right=W/(2*k); cam.top=H/(2*k); cam.bottom=-H/(2*k);
   cam.updateProjectionMatrix(); cam.updateMatrixWorld(true);
-  renderer.render(scene,cam);
+  const nf=(cfg.spin&&spinNode)?cfg.spin.frames:1;
+  const [cc,cx]=cv(W*nf,H);
+  for(let f=0;f<nf;f++){
+    if(spinNode){
+      const a=(f/nf)*Math.PI*2/(cfg.spin.blades||1);
+      spinNode.rotation[cfg.spin.axis||'z']=(cfg.spin.base||0)+a;
+      spinNode.updateMatrixWorld(true);
+    }
+    renderer.render(scene,cam);
+    cx.drawImage(renderer.domElement,f*W,0);
+  }
 
   const o=new THREE.Vector3(0,0,0).project(cam);
   let ax=(o.x*0.5+0.5)*W, ay=(-o.y*0.5+0.5)*H;
-
-  /* crop to the drawn pixels, moving the anchor with the crop */
-  const [cc,cx]=cv(W,H); cx.drawImage(renderer.domElement,0,0);
-  const d=cx.getImageData(0,0,W,H).data;
+  /* one crop box across every frame, so they stay registered to each other */
+  const d=cx.getImageData(0,0,W*nf,H).data;
   let x0=W,y0=H,x1=-1,y1=-1;
-  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
-    if(d[(y*W+x)*4+3]>6){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+  for(let f=0;f<nf;f++)for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    if(d[(y*W*nf+f*W+x)*4+3]>6){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
   }
   if(x1<0){ scene.remove(root); throw new Error('nothing rendered for '+cfg.mesh); }
   const cw=x1-x0+1, ch=y1-y0+1;
-  const [outc,octx]=cv(cw,ch); octx.drawImage(cc,-x0,-y0);
+  const [outc,octx]=cv(cw*nf,ch);
+  for(let f=0;f<nf;f++) octx.drawImage(cc, f*W+x0,y0,cw,ch, f*cw,0,cw,ch);
   scene.remove(root);
   renderer.setSize(FW,FH,false);
-  return {png:outc.toDataURL('image/png'), w:cw, h:ch,
+  return {png:outc.toDataURL('image/png'), w:cw, h:ch, frames:nf,
           ax:+(ax-x0).toFixed(2), ay:+(ay-y0).toFixed(2)};
 };
 

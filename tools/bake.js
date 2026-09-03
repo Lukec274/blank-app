@@ -44,7 +44,8 @@ const S={
 const PROPS={
   bld_tc:      {mesh:'building_market_blue.gltf',         tiles:3},
   bld_house:   {mesh:'building_home_A_blue.gltf',         tiles:1},
-  bld_mill:    {mesh:'building_windmill_blue.gltf',       tiles:2},
+  bld_mill:    {mesh:'building_windmill_blue.gltf',       tiles:2,
+                spin:{node:'building_windmill_top_fan_blue',frames:8,blades:4,axis:'z'}},
   bld_lumber:  {mesh:'building_lumbermill_blue.gltf',     tiles:2},
   bld_mining:  {mesh:'building_mine_blue.gltf',           tiles:2},
   bld_barracks:{mesh:'building_barracks_blue.gltf',       tiles:3},
@@ -184,7 +185,7 @@ const srv=http.createServer((q,s)=>{
     for(const [name,cfg] of Object.entries(PROPS)){
       const r=await page.evaluate(c=>window.__bakeProp(c),cfg);
       fs.writeFileSync(path.join(OUT,name+'.png'),Buffer.from(r.png.split(',')[1],'base64'));
-      props[name]={ax:r.ax,ay:r.ay,w:r.w,h:r.h};
+      props[name]={ax:r.ax,ay:r.ay,w:r.w,h:r.h,frames:r.frames||1};
       console.log(name.padEnd(14), r.w+'x'+r.h, 'anchor', r.ax+','+r.ay);
     }
     fs.writeFileSync(PF,JSON.stringify(props,null,1));
@@ -196,7 +197,8 @@ const srv=http.createServer((q,s)=>{
     const MF=path.join(OUT,'units.json');
     const manifest=fs.existsSync(MF)?JSON.parse(fs.readFileSync(MF,'utf8')):{};
     for(const kind of ['sheep','cattle','boar','wolf']){
-      const r=await page.evaluate(k=>window.__bakeBeast({kind:k,yawOffset:180,zoom:0.86}),kind);
+      const BZ={sheep:1.75,cattle:1.45,boar:1.55,wolf:1.60};
+      const r=await page.evaluate(a=>window.__bakeBeast(a),{kind,yawOffset:180,zoom:BZ[kind]});
       fs.writeFileSync(path.join(OUT,kind+'.png'),Buffer.from(r.png.split(',')[1],'base64'));
       manifest[kind]={fw:r.fw,fh:r.fh,frames:r.frames,anchor:r.anchor,states:r.states};
       console.log(kind.padEnd(9),(r.png.length*0.75/1024|0)+'KB',r.frames+' frames');
