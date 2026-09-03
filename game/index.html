@@ -631,6 +631,16 @@ function forgeTerrain(){
   for(const k of Object.keys(TERRAIN)){
     const t=+k; ART.tiles[t]=[];
     for(let v=0;v<6;v++) ART.tiles[t].push(makeTile(t, v*97, v*53, n, n2));
+    /* the cut face shown below a raised tile, so relief does not look like
+       sprites floating off the ground */
+    ART.tilesDark=ART.tilesDark||{};
+    ART.tilesDark[t]=ART.tiles[t].map(src=>{
+      const [c2,x2]=cv(src.width,src.height);
+      x2.drawImage(src,0,0);
+      x2.globalCompositeOperation='source-atop';
+      x2.fillStyle='rgba(24,18,10,.46)'; x2.fillRect(0,0,src.width,src.height);
+      return c2;
+    });
     ART.edges[t]=[0,1,2,3].map(d=>makeEdge(ART.tiles[t][0],d));
   }
   makeWaterFrames();
@@ -638,34 +648,70 @@ function forgeTerrain(){
 
 /* ---------- world decor: trees, ore, bushes, farms ---------- */
 function blob(x,cx,cy,r,fill){x.beginPath();x.arc(cx,cy,r,0,7);x.fillStyle=fill;x.fill();}
-function makeTree(kind,seed){
+function makeTree(kind,seed,wear){
+  /* wear is how much timber is left, 1 down to 0. A stand of trees should read
+     as a worked forest: full canopies where nobody has been, thinning and
+     cut-branch stubs where they have, near-bare trunks about to fall. */
+  const w = wear===undefined?1:clamp(wear,0,1);
   const W=54,H=76,[c,x]=cv(W,H);
   const r=mulberry32(seed);
   const bx=W/2, by=H-9;
-  x.globalAlpha=.26;x.fillStyle='#000';
-  x.beginPath();x.ellipse(bx,by+3,15,6,0,0,7);x.fill();x.globalAlpha=1;
-  const trunk = kind==='pine' ? '#4a3421' : '#5c412a';
+  const scale=0.82+r()*0.36;                    /* no two trees the same height */
+  const lean=(r()-.5)*0.16;
+  x.globalAlpha=.26*(0.5+w*0.5);x.fillStyle='#000';
+  x.beginPath();x.ellipse(bx,by+3,15*scale,6*scale,0,0,7);x.fill();x.globalAlpha=1;
+  const trunk = kind==='pine' ? '#4a3421' : (kind==='birch'? '#b9b3a4' : '#5c412a');
+  const th=(kind==='pine'?20:18)*scale;
+  x.save(); x.translate(bx,by); x.rotate(lean);
   x.fillStyle=trunk;
-  x.beginPath();x.moveTo(bx-3,by);x.lineTo(bx-2.2,by-18);x.lineTo(bx+2.2,by-18);x.lineTo(bx+3,by);x.closePath();x.fill();
-  x.fillStyle=shade(trunk,1.28);x.fillRect(bx-3,by-18,1.4,18);
+  x.beginPath();x.moveTo(-3.2*scale,0);x.lineTo(-2.2*scale,-th);x.lineTo(2.2*scale,-th);x.lineTo(3.2*scale,0);x.closePath();x.fill();
+  x.fillStyle=shade(trunk,1.28);x.fillRect(-3.2*scale,-th,1.4,th);
+  if(kind==='birch'){                            /* bark ticks read even at this size */
+    x.fillStyle='rgba(40,34,26,.65)';
+    for(let i=0;i<4;i++) x.fillRect(-2.4*scale,-th*(0.22+i*0.2),3.2*scale,1.1);
+  }
+  if(w<0.66){                                    /* axe scars where it has been worked */
+    x.fillStyle='rgba(228,206,158,.85)';
+    for(let i=0;i<(w<0.33?3:2);i++){
+      const yy=-th*(0.12+r()*0.30);
+      x.beginPath();x.moveTo(-3.0*scale,yy);x.lineTo(0.6*scale,yy-2.2);x.lineTo(-3.0*scale,yy-3.4);x.closePath();x.fill();
+    }
+  }
+  x.restore();
+  const cy=by-(kind==='pine'?16:30)*scale;
   if(kind==='pine'){
     const g1='#2f4d2c',g2='#3d6437',g3='#527d43';
-    for(let i=0;i<5;i++){
-      const yy=by-16-i*9, w=20-i*3.1;
-      x.beginPath();x.moveTo(bx,yy-13);x.lineTo(bx+w,yy+2);x.lineTo(bx-w,yy+2);x.closePath();
+    const tiers=Math.max(1,Math.round(5*(0.18+w*0.82)));
+    for(let i=0;i<tiers;i++){
+      const yy=by-16*scale-i*9*scale, wd=(20-i*3.1)*scale;
+      x.beginPath();x.moveTo(bx,yy-13*scale);x.lineTo(bx+wd,yy+2);x.lineTo(bx-wd,yy+2);x.closePath();
       x.fillStyle=[g1,g2,g3][i%3];x.fill();
-      x.beginPath();x.moveTo(bx,yy-13);x.lineTo(bx-w,yy+2);x.lineTo(bx-w*.3,yy+2);x.closePath();
+      x.beginPath();x.moveTo(bx,yy-13*scale);x.lineTo(bx-wd,yy+2);x.lineTo(bx-wd*.3,yy+2);x.closePath();
       x.fillStyle='rgba(255,255,255,.07)';x.fill();
     }
   } else {
-    const pal = kind==='autumn' ? ['#7a5a24','#94702c','#b08a38'] : ['#365c2c','#457036','#598a43'];
-    const cy=by-30;
-    for(let i=0;i<9;i++){
-      const a=r()*6.28, d=r()*13;
-      blob(x,bx+Math.cos(a)*d, cy+Math.sin(a)*d*.7, 8+r()*6, pal[(r()*3)|0]);
+    const pal = kind==='autumn' ? ['#7a5a24','#94702c','#b08a38']
+              : kind==='birch'  ? ['#5c7a34','#6f8f3f','#87a44e']
+              : kind==='dark'   ? ['#1d3722','#254528','#2e5531']
+              :                   ['#365c2c','#457036','#598a43'];
+    if(w<0.55){                    /* bare limbs first, so the crown sits over them */
+      x.strokeStyle=shade(trunk,.88); x.lineWidth=1.5;
+      const limbs=w<0.2?5:3;
+      for(let i=0;i<limbs;i++){
+        const a=-0.35-r()*2.4, len=(10+r()*8)*scale;
+        x.beginPath();x.moveTo(bx,cy+6*scale);
+        x.lineTo(bx+Math.cos(a)*len, cy+6*scale+Math.sin(a)*len*.8);x.stroke();
+      }
     }
-    blob(x,bx-5,cy-7,7,'rgba(255,255,255,.10)');
-    x.globalAlpha=.30;blob(x,bx+7,cy+7,8,'#12210f');x.globalAlpha=1;
+    const blobs=Math.max(1,Math.round(9*(0.10+w*0.90)));
+    for(let i=0;i<blobs;i++){
+      const a=r()*6.28, d=r()*13*scale*(0.45+w*0.55);
+      blob(x,bx+Math.cos(a)*d, cy+Math.sin(a)*d*.7, (8+r()*6)*scale*(0.45+w*0.55), pal[(r()*3)|0]);
+    }
+    if(w>0.25){
+      blob(x,bx-5*scale,cy-7*scale,7*scale,'rgba(255,255,255,.10)');
+      x.globalAlpha=.30;blob(x,bx+7*scale,cy+7*scale,8*scale,'#12210f');x.globalAlpha=1;
+    }
   }
   return c;
 }
@@ -720,9 +766,18 @@ function makeFarm(stage){
   x.beginPath();x.moveTo(THW,0);x.lineTo(TW,THH);x.lineTo(THW,TH);x.lineTo(0,THH);x.closePath();x.stroke();
   return c;
 }
+const TREE_WEAR=[1,0.60,0.32,0.09];   /* canopy states, full down to nearly felled */
+function treeStage(r){
+  const f=r.max? r.amt/r.max : 1;
+  return f>0.70?0 : f>0.42?1 : f>0.18?2 : 3;
+}
 function forgeDeco(){
   const rim=(c)=>outlined(c,1,'rgba(14,10,5,.62)');
-  ART.deco.tree=[]; for(let i=0;i<4;i++) ART.deco.tree.push(rim(makeTree(i===3?'pine':(i===2?'autumn':'oak'), 100+i*37)));
+  /* eight species/shape variants, each in four states of depletion, so a forest
+     reads as a forest and you can see at a glance what is nearly worked out */
+  const TREE_KINDS=['oak','oak','autumn','pine','pine','birch','dark','oak'];
+  ART.deco.tree=TREE_KINDS.map((k,i)=>
+    TREE_WEAR.map(w=>rim(makeTree(k,100+i*37,w))));
   ART.deco.pine=[rim(makeTree('pine',7)),rim(makeTree('pine',19))];
   ART.deco.gold=[rim(makeOre('gold',3)),rim(makeOre('gold',11))];
   ART.deco.stone=[rim(makeOre('stone',5)),rim(makeOre('stone',23))];
@@ -1357,18 +1412,30 @@ const G = {
 const idx=(x,y)=>y*G.w+x;
 const inMap=(x,y)=> x>=0&&y>=0&&x<G.w&&y<G.h;
 const tileAt=(x,y)=> inMap(x,y)? G.tile[idx(x,y)] : TT.WATER;
+/* How far a tile is raised on screen, in unzoomed pixels. Purely visual: the
+   simulation stays on a flat grid, so pathing and placement are untouched. */
+const LIFT=17;
+function liftAt(wx,wy){
+  if(!G.hgt)return 0;
+  const x=clamp(wx|0,0,G.w-1), y=clamp(wy|0,0,G.h-1);
+  return G.hgt[idx(x,y)]*LIFT;
+}
 const blocked=(x,y)=> !inMap(x,y) || !TT_PASS[G.tile[idx(x,y)]] || G.occ[idx(x,y)]!==0;
 
 function genMap(size,seed){
   RNG=mulberry32(seed);
   G.w=G.h=size; const N=size*size;
   G.tile=new Uint8Array(N); G.occ=new Int32Array(N);
+  /* the same elevation the biome picker uses, kept so the ground can be drawn
+     with relief instead of as one flat plane */
+  G.hgt=new Float32Array(N);
   const el=makeNoise(seed*7+1), mo=makeNoise(seed*13+5), fo=makeNoise(seed*29+3);
   for(let y=0;y<size;y++)for(let x=0;x<size;x++){
     const e=fbm(el,x*.055,y*.055,4,2.0,.5);
     const edge=Math.min(x,y,size-1-x,size-1-y)/(size*.5);
     const v=e-(1-clamp(edge*2.7,0,1))*.55;
     let t;
+    G.hgt[idx(x,y)] = clamp((v-.395)/.42,0,1);
     if(v<.30) t=TT.WATER; else if(v<.35) t=TT.SHALLOW; else if(v<.395) t=TT.SAND;
     else { /* domain-warped moisture keeps biome edges organic rather than banded */
       const wx=x*.085+fbm(fo,x*.03,y*.03,2,2,.5)*6, wy=y*.085+fbm(fo,x*.03+9,y*.03+9,2,2,.5)*6;
@@ -1432,7 +1499,16 @@ function scatterWorld(nf){
   for(let y=0;y<size;y++)for(let x=0;x<size;x++){
     const t=G.tile[idx(x,y)]; if(t!==TT.GRASS&&t!==TT.MEADOW)continue;
     const f=fbm(nf,x*.10,y*.10,3,2.1,.55);
-    if(f>.60 && rnd()< (f-.60)*4.6){ const r2=rnd(); addRes('tree',x,y,100, r2<.30?3:(r2>.93?2:rndi(2))); }
+    if(f>.60 && rnd()< (f-.60)*4.6){
+      /* species run in stands rather than salt-and-pepper, so a pine wood reads
+         as a pine wood -- the region hash keeps neighbours the same kind */
+      const stand=(((x/9)|0)*7 + ((y/9)|0)*13) % 5;
+      const pool = stand===0 ? [3,4,3,4,6]        /* pine stand */
+                 : stand===1 ? [5,5,0,1,2]        /* birch and light oak */
+                 : stand===2 ? [6,6,0,7,3]        /* dark old wood */
+                 :             [0,1,7,0,2];       /* mixed oak, the common case */
+      addRes('tree',x,y,100, pool[rndi(pool.length)]);
+    }
   }
   /* mineral seams */
   const clusters=Math.round(size*size/460);
@@ -3018,8 +3094,18 @@ function camApply(){
 function w2sx(wx,wy){return (wx-wy)*THW*cam.z+cam.ox;}
 function w2sy(wx,wy){return (wx+wy)*THH*cam.z+cam.oy;}
 function s2w(sx,sy){
-  const a=(sx-cam.ox)/(THW*cam.z), b=(sy-cam.oy)/(THH*cam.z);
-  return {x:(a+b)/2, y:(b-a)/2};
+  const solve=(yy)=>{
+    const a=(sx-cam.ox)/(THW*cam.z), b=(yy-cam.oy)/(THH*cam.z);
+    return {x:(a+b)/2, y:(b-a)/2};
+  };
+  let w=solve(sy);
+  /* the ground is drawn raised by its height, so a tap has to be pushed back
+     down before it names a tile -- two passes converge well inside a pixel */
+  if(G.hgt){
+    w=solve(sy+liftAt(w.x,w.y)*cam.z);
+    w=solve(sy+liftAt(w.x,w.y)*cam.z);
+  }
+  return w;
 }
 function clampCam(){
   cam.x=clamp(cam.x,0,G.w); cam.y=clamp(cam.y,0,G.h);
@@ -3122,7 +3208,13 @@ function draw(dt){
       let img;
       if(t===TT.WATER||t===TT.SHALLOW) img=ART.water[(wf+((x*3+y*5)%6))%6];
       else img=ART.tiles[t][(hash2(x,y)*6)|0];
-      ctx.drawImage(img,sx,sy,tw+1,th+1);
+      const lift=liftAt(x,y)*z;
+      if(lift>0.6&&t!==TT.WATER&&t!==TT.SHALLOW){
+        const dk=(ART.tilesDark&&ART.tilesDark[t])?ART.tilesDark[t][(hash2(x,y)*6)|0]:img;
+        ctx.drawImage(dk,sx,sy,tw+1,th+1);
+        ctx.drawImage(dk,sx,sy-lift*0.5,tw+1,th+1);
+      }
+      ctx.drawImage(img,sx,sy-lift,tw+1,th+1);
       /* soft transitions with higher-priority neighbours (not worth it zoomed out) */
       if(z<0.62)continue;
       const pr=TT_PRIO[t];
@@ -3180,7 +3272,7 @@ function draw(dt){
   }
   /* entities */
   for(const e of list){
-    const sx=w2sx(e.x,e.y), sy=w2sy(e.x,e.y);
+    const sx=w2sx(e.x,e.y), sy=w2sy(e.x,e.y)-liftAt(e.x,e.y)*z;
     if(e.t!==undefined&&e.k){ drawFx(e); continue; }
     if(e.type==='r'){
       let img;
@@ -3201,7 +3293,7 @@ function draw(dt){
           }
         }
       }
-      if(e.kind==='tree')img=ART.deco.tree[e.v%4];
+      if(e.kind==='tree')img=ART.deco.tree[e.v%8][treeStage(e)];
       else if(e.kind==='gold')img=ART.deco.gold[e.v%2];
       else if(e.kind==='stone')img=ART.deco.stone[e.v%2];
       else img=ART.deco.berry[e.v%2];
@@ -4294,7 +4386,7 @@ function loadGame(){
    MENUS
    ============================================================ */
 const menuEl=$('menu');
-let SETUP={size:76,diff:'moderate',pop:120,res:200,players:2,civ:'free'};
+let SETUP={size:104,diff:'moderate',pop:120,res:200,players:2,civ:'free'};
 function closeMenu(){ menuEl.classList.add('off'); if(G.started&&!G.demo)G.paused=false; }
 function openMenu(){ if(G.started&&!G.demo){G.paused=true; showPause();} }
 function seg(label,opts,cur,cb){
@@ -4336,7 +4428,7 @@ function showSetup(){
       </div>
       ${seg('Opponent',[{v:'easy',t:'Peaceful'},{v:'moderate',t:'Standard'},{v:'hard',t:'Ruthless'}],SETUP.diff)}
       ${seg('Rivals',[{v:'1',t:'1 rival'},{v:'2',t:'2 rivals'},{v:'3',t:'3 rivals'}],String(SETUP.players-1))}
-      ${seg('World',[{v:'60',t:'Small'},{v:'76',t:'Medium'},{v:'92',t:'Large'}],String(SETUP.size))}
+      ${seg('World',[{v:'80',t:'Small'},{v:'104',t:'Medium'},{v:'132',t:'Large'}],String(SETUP.size))}
       ${seg('Starting stores',[{v:'200',t:'Standard'},{v:'650',t:'Rich'},{v:'1500',t:'Lavish'}],String(SETUP.res))}
       ${seg('Population',[{v:'75',t:'75'},{v:'120',t:'120'},{v:'200',t:'200'}],String(SETUP.pop))}
     </div>
