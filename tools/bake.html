@@ -25,26 +25,55 @@ function placeCam(radius,centerY){
   cam.left=-h*(FW/FH); cam.right=h*(FW/FH); cam.top=h; cam.bottom=-h;
   cam.updateProjectionMatrix();
 }
-/* light: warm key from the camera's left, cool fill, soft ambient — reads at 30px */
-const key=new THREE.DirectionalLight(0xfff0d8,2.1); key.position.set(-4,7,5); scene.add(key);
-const fill=new THREE.DirectionalLight(0x9ab4d8,0.75); fill.position.set(5,2,-4); scene.add(fill);
-const rim=new THREE.DirectionalLight(0xffffff,0.7); rim.position.set(2,4,-6); scene.add(rim);
-scene.add(new THREE.AmbientLight(0xb9c4d0,0.85));
+/* Lighting.
+   The reference art is rendered in a raytracer, so every sprite carries soft
+   shadows, occlusion in its crevices and bounce light off the ground. Flat
+   directional lights on flat-shaded low-poly is exactly the look that reads as
+   blocky and toy-like -- each facet comes out one uniform colour with nothing
+   to describe the form. So: a shadow-casting key with a soft map, a hemisphere
+   light standing in for sky-and-ground bounce, and much less flat ambient. */
+const key=new THREE.DirectionalLight(0xfff2dc,2.35);
+key.position.set(-3.4,12,4.2);
+key.castShadow=true;
+key.shadow.mapSize.set(1024,1024);
+key.shadow.radius=3.5;
+key.shadow.bias=-0.0016;
+const sc=key.shadow.camera;
+sc.left=-3.2; sc.right=3.2; sc.top=3.2; sc.bottom=-3.2; sc.near=0.1; sc.far=26;
+scene.add(key);
+const fill=new THREE.DirectionalLight(0x9ab4d8,0.55); fill.position.set(5,2,-4); scene.add(fill);
+const rim=new THREE.DirectionalLight(0xffffff,0.55); rim.position.set(2,4,-6); scene.add(rim);
+/* sky above, warm ground bounce below -- this is what stops each facet reading
+   as a single flat colour */
+scene.add(new THREE.HemisphereLight(0xcfe0f2,0x6b5836,1.05));
+scene.add(new THREE.AmbientLight(0xb9c4d0,0.22));
+
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+
+/* an invisible floor so contact shadows land somewhere, without drawing it */
+const shadowFloor=new THREE.Mesh(new THREE.PlaneGeometry(40,40),
+  new THREE.ShadowMaterial({opacity:0.34}));
+shadowFloor.rotation.x=-Math.PI/2; shadowFloor.receiveShadow=true;
+scene.add(shadowFloor);
+function setShadowFloor(y){ shadowFloor.position.y=y-0.002; }
 
 const TEAM=0xff00ff;                        // keyed, recoloured per player at load
 const MATS={
-  team:  new THREE.MeshLambertMaterial({color:TEAM}),
-  skin:  new THREE.MeshLambertMaterial({color:0xd8a878}),
-  cloth: new THREE.MeshLambertMaterial({color:0x6b563c}),
-  leather:new THREE.MeshLambertMaterial({color:0x4e3a24}),
-  steel: new THREE.MeshLambertMaterial({color:0xb9bec8}),
-  dark:  new THREE.MeshLambertMaterial({color:0x3a2f24}),
-  wood:  new THREE.MeshLambertMaterial({color:0x7a5732}),
-  gold:  new THREE.MeshLambertMaterial({color:0xd8a13a}),
-  robe:  new THREE.MeshLambertMaterial({color:0xe8e0cc}),
+  team:  new THREE.MeshStandardMaterial({color:TEAM}),
+  skin:  new THREE.MeshStandardMaterial({color:0xd8a878}),
+  cloth: new THREE.MeshStandardMaterial({color:0x6b563c}),
+  leather:new THREE.MeshStandardMaterial({color:0x4e3a24}),
+  steel: new THREE.MeshStandardMaterial({color:0xb9bec8}),
+  dark:  new THREE.MeshStandardMaterial({color:0x3a2f24}),
+  wood:  new THREE.MeshStandardMaterial({color:0x7a5732}),
+  gold:  new THREE.MeshStandardMaterial({color:0xd8a13a}),
+  robe:  new THREE.MeshStandardMaterial({color:0xe8e0cc}),
 };
-function box(w,h,d,m){return new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);}
-function cyl(r,h,m,seg){return new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,seg||8),m);}
+function box(w,h,d,m){const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);
+  o.castShadow=true;o.receiveShadow=true;return o;}
+function cyl(r,h,m,seg){const o=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,seg||8),m);
+  o.castShadow=true;o.receiveShadow=true;return o;}
 
 /* weapons, built from primitives and parented to the hand bone */
 function makeWeapon(kind){
@@ -149,8 +178,8 @@ const BEASTS={
 };
 function makeBeast(kind){
   const B=BEASTS[kind];
-  const M=new THREE.MeshLambertMaterial({color:B.col});
-  const D=new THREE.MeshLambertMaterial({color:B.dark});
+  const M=new THREE.MeshStandardMaterial({color:B.col});
+  const D=new THREE.MeshStandardMaterial({color:B.dark});
   const g=new THREE.Group(), legs=[];
   const y=B.high;
   const body=box(B.wid,B.high*0.52,B.len,M); body.position.y=y; g.add(body);
@@ -176,7 +205,7 @@ function makeBeast(kind){
     e.position.set(sx*B.head*.42, hy+B.head*(B.ears==='up'?.62:.36), ez); g.add(e);
     if(B.horns){ const h=box(.05,.05,.22,D);
       h.position.set(sx*B.head*.46,hy+B.head*.44,nz+B.head*.50); h.rotation.y=sx*.5; g.add(h); }
-    if(B.tusks){ const t=box(.04,.10,.05,0xdad2be&&new THREE.MeshLambertMaterial({color:0xdad2be}));
+    if(B.tusks){ const t=box(.04,.10,.05,0xdad2be&&new THREE.MeshStandardMaterial({color:0xdad2be}));
       t.position.set(sx*B.head*.24,hy-B.head*.26,nz+B.head*1.0+B.snout*.5); t.rotation.x=-.5; g.add(t); }
   }
   const tz=-B.len*0.55;
@@ -194,8 +223,8 @@ function makeBeast(kind){
   return g;
 }
 function makeHorse(col,dark){
-  const M=new THREE.MeshLambertMaterial({color:col});
-  const D=new THREE.MeshLambertMaterial({color:dark||0x000000});
+  const M=new THREE.MeshStandardMaterial({color:col});
+  const D=new THREE.MeshStandardMaterial({color:dark||0x000000});
   const g=new THREE.Group(), legs=[];
   const body=box(.52,.42,1.05,M); body.position.y=.98; g.add(body);
   const chest=box(.50,.44,.34,M); chest.position.set(0,1.02,.42); g.add(chest);
@@ -254,7 +283,7 @@ window.__bake=async function(cfg){
     if(!o.isMesh&&!o.isSkinnedMesh)return;
     const n=(o.name.split('_').pop()||'');
     const key=(cfg.parts&&cfg.parts[n])||partMat[n]||'cloth';
-    o.material=MATS[key]; o.frustumCulled=false;
+    o.material=MATS[key]; o.frustumCulled=false; o.castShadow=true; o.receiveShadow=true;
   });
   /* Frame from the body alone. Box3.setFromObject ignores the visible flag, so a
      pack model's hidden staff or spare shield would otherwise stretch the box and
@@ -341,6 +370,7 @@ window.__bake=async function(cfg){
     ground=mb.min.y;
     fit=mb.max.y-mb.min.y;
   }
+  setShadowFloor(ground);
   const cy=ground+fit*(cfg.mount?0.50:0.46);
   placeCam(fit*(cfg.mount?0.60:0.80)*(cfg.zoom||1), cy);
   cam.updateMatrixWorld(true);
@@ -410,10 +440,11 @@ function cv(w,h){const c=document.createElement('canvas');c.width=w;c.height=h;r
    path it already has. */
 window.__bakeBeast=async function(cfg){
   const g=makeBeast(cfg.kind);
+  g.traverse(o=>{ if(o.isMesh){o.castShadow=true;o.receiveShadow=true;} });
   scene.add(g); g.updateMatrixWorld(true);
   const bb=new THREE.Box3().setFromObject(g);
   const H=bb.max.y-bb.min.y;
-  g.position.y=-bb.min.y; g.updateMatrixWorld(true);
+  g.position.y=-bb.min.y; g.updateMatrixWorld(true); setShadowFloor(0);
 
   placeCam(H*1.15*(cfg.zoom||1), H*0.52);
   cam.updateMatrixWorld(true);
@@ -456,7 +487,7 @@ window.__bakeProp=async function(cfg){
   const gltf=await load('./glb/'+cfg.mesh);
   const root=gltf.scene;
   scene.add(root); root.updateMatrixWorld(true);
-  root.traverse(o=>{ if(o.isMesh){o.frustumCulled=false;
+  root.traverse(o=>{ if(o.isMesh){o.frustumCulled=false; o.castShadow=true; o.receiveShadow=true;
     if(cfg.hide&&cfg.hide.some(h=>o.name.indexOf(h)>=0))o.visible=false; } });
 
   /* a named sub-node that turns, baked as a strip of frames the game cycles */
@@ -468,6 +499,7 @@ window.__bakeProp=async function(cfg){
   root.position.set(-(box.min.x+box.max.x)/2, -box.min.y, -(box.min.z+box.max.z)/2);
   root.updateMatrixWorld(true);
   box=new THREE.Box3().setFromObject(root);
+  setShadowFloor(box.min.y);
   const foot=Math.max(box.max.x-box.min.x, box.max.z-box.min.z);
 
   /* pixels per world unit, so a `tiles`-wide footprint spans tiles*TW across the
