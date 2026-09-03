@@ -1030,7 +1030,13 @@ function sheetFrame(kind,ci,row,col){
 /* which baked clip a unit should be showing right now */
 function sheetAnim(u,S){
   let st='idle';
+  /* Travelling always reads as walking. u.state is only set to 'gather' on
+     arrival and never cleared, so a villager that had chopped once kept the
+     chopping clip for every step afterwards -- including the walk to the tree
+     and the whole carry back to the drop-off. */
+  const travelling = !!(u.path||u.flow);
   if(u.state==='attack'&&(u.frame|0)>=5) st='attack';
+  else if(travelling) st='walk';
   else if(u.state==='gather'||u.state==='build'){
     if(u.kind==='villager'){
       const t=u.task&&u.task.kind;
