@@ -99,6 +99,19 @@ const PROPS={
   bld_monastery:{mesh:'building_church_blue.gltf',        tiles:3},
   bld_castle:  {mesh:'building_castle_blue.gltf',         tiles:3},
   bld_siege:   {mesh:'building_tower_catapult_blue.gltf', tiles:3},
+  /* A stable, a second house and the three civ landmarks. Without these the
+     game fell back to the procedural sprites for them, and a flat-shaded canvas
+     building standing in a street of baked models is worse than either. */
+  /* No stable in the pack. The lumber mill is an open timber barn, which is
+     what a stable is; at three tiles against the lumber camp's two the two
+     never read as the same building. */
+  bld_stable:  {mesh:'building_lumbermill_blue.gltf',     tiles:3},
+  bld_house_b: {mesh:'building_home_B_blue.gltf',         tiles:1},
+  bld_marchkeep:{mesh:'building_tower_B_blue.gltf',       tiles:2},
+  bld_relay:   {mesh:'building_watermill_blue.gltf',      tiles:2},
+  bld_themehall:{mesh:'building_tavern_blue.gltf',        tiles:2},
+  bld_wonder:  {mesh:'building_church_blue.gltf',         tiles:4},
+  dec_well:    {mesh:'building_well_blue.gltf',           px:56},
 };
 
 const UNITS={
@@ -226,7 +239,12 @@ const srv=http.createServer((q,s)=>{
   if(process.argv[2]==='--props'){
     const PF=path.join(OUT,'props.json');
     const props=fs.existsSync(PF)?JSON.parse(fs.readFileSync(PF,'utf8')):{};
+    /* `--props <name> [...]` bakes just those, so adding one asset does not
+       rewrite the other forty-five PNGs. props.json is seeded from the file on
+       disk, so the entries not baked survive. */
+    const only=process.argv.slice(3);
     for(const [name,cfg] of Object.entries(PROPS)){
+      if(only.length&&!only.includes(name))continue;
       const r=await page.evaluate(c=>window.__bakeProp(c),cfg);
       fs.writeFileSync(path.join(OUT,name+'.png'),Buffer.from(r.png.split(',')[1],'base64'));
       props[name]={ax:r.ax,ay:r.ay,w:r.w,h:r.h,frames:r.frames||1};
