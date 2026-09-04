@@ -400,7 +400,8 @@ const UPGRADES = {
 
 const BLD = {
   tc:{n:'Town Center',cost:{w:275,s:100},size:3,hp:1200,los:9,build:90,pop:5,drop:'all',
-      trains:['villager'],techs:['loom','wheelbarrow','handcart'],ageup:true},
+      trains:['villager'],techs:['loom','wheelbarrow','handcart'],ageup:true,
+      garr:15,atk:5,rng:8,rate:2.2,dtype:'pierce',arrows:0},
   house:{n:'House',cost:{w:25},size:1,hp:320,los:4,build:20,pop:5},
   mill:{n:'Mill',cost:{w:100},size:2,hp:480,los:5,build:35,drop:'f',techs:['horsecollar']},
   farm:{n:'Farm',cost:{w:60},size:1,hp:100,los:2,build:15,farm:320,noSelectHp:true},
@@ -411,7 +412,7 @@ const BLD = {
   stable:{n:'Stable',cost:{w:175},size:3,hp:800,los:6,build:50,age:1,trains:['scout','knight']},
   smith:{n:'Blacksmith',cost:{w:150},size:2,hp:800,los:6,build:40,age:1,
       techs:['forge1','forge2','armor1','armor2','fletch1','fletch2']},
-  tower:{n:'Watch Tower',cost:{w:50,s:125},size:1,hp:850,los:10,build:40,age:1,atk:6,rng:7,rate:2.0,dtype:'pierce',ar:1,pa:5},
+  tower:{n:'Watch Tower',cost:{w:50,s:125},size:1,hp:850,los:10,build:40,age:1,atk:6,rng:7,rate:2.0,dtype:'pierce',ar:1,pa:5,garr:5},
   /* A wall is a building like any other -- it just happens to be one tile of
      stone you lay in runs. The gate is the same wall with a hole its owner can
      walk through; that is what makes a walled town a decision rather than a
@@ -424,13 +425,13 @@ const BLD = {
   siege:{n:'Siege Workshop',cost:{w:200},size:3,hp:800,los:6,build:60,age:2,trains:['ram','mangonel']},
   monastery:{n:'Monastery',cost:{w:175},size:3,hp:800,los:8,build:55,age:2,trains:['monk'],techs:['fervor']},
   castle:{n:'Castle',cost:{s:650},size:3,hp:2700,los:12,build:180,age:2,atk:11,rng:9,rate:1.6,ar:8,pa:11,dtype:'pierce',
-      arrows:3,trains:['knight'],pop:0},
+      arrows:3,trains:['knight'],pop:0,garr:20},
   relay:{n:'Relay Post',cost:{w:150,g:50},size:2,hp:900,los:12,build:45,age:1,civ:'ordu',landmark:true,
     aura:{r:14,spd:1.15,heal:2.5}},
   themehall:{n:'Theme Hall',cost:{w:175,s:75},size:2,hp:1100,los:8,build:50,age:1,civ:'aureate',landmark:true,
     pop:5, trainFast:{spearman:.65,skirmisher:.65,pavise:.8}},
   marchkeep:{n:'March Keep',cost:{w:100,s:250},size:2,hp:1800,los:11,build:60,age:1,civ:'iron',landmark:true,
-    atk:9,rng:8,rate:1.8,ar:6,pa:9,dtype:'pierce',arrows:2, aura:{r:9,repair:12}},
+    atk:9,rng:8,rate:1.8,ar:6,pa:9,dtype:'pierce',arrows:2, aura:{r:9,repair:12}, garr:10},
   wonder:{n:'Wonder',cost:{w:1000,s:1000,g:1000},size:4,hp:4800,los:8,build:420,age:3,wonder:true},
 };
 
@@ -2353,6 +2354,7 @@ function killEnt(e){
   } else {
     const B=BLD[e.kind];
     if(B.pop&&e.built>=1)p.popCap=Math.max(0,p.popCap-B.pop);
+    if(e.garr&&e.garr.length) ungarrisonAll(e);
     for(const [x,y] of bldCells(e)) if(G.occ[idx(x,y)]===e.id)G.occ[idx(x,y)]=0;
     if(BLD[e.kind]&&BLD[e.kind].gate) G.gate[idx(e.tx,e.ty)]=0;
     G.occGen=(G.occGen||1)+1;
@@ -2373,6 +2375,10 @@ function hashKey(x,y){return ((y/HASH.size)|0)*4096 + ((x/HASH.size)|0);}
 function rebuildHash(){
   HASH.map.clear();
   for(const u of G.units){
+    /* garrisoned units are inside, which means out of everything that works by
+       proximity: nothing shoots them, nothing bumps into them, nothing finds
+       them to attack */
+    if(u.inside)continue;
     const k=hashKey(u.x,u.y); let a=HASH.map.get(k); if(!a){a=[];HASH.map.set(k,a);} a.push(u);
   }
 }
@@ -2533,6 +2539,105 @@ function moveTo(u,x,y,adjTo){
   const p=findPath(u.x,u.y,goal.x,goal.y,adjTo?adjTo.id:0,null,u.owner);
   if(!p||!p.length){ u.path=null; return false; }
   u.path=p; u.pi=0; u.repathT=0; return true;
+}
+/* ---------- garrison ----------
+   Somewhere to put people when the fighting reaches the town. A garrisoned unit
+   stays in G.units -- it still counts against population, it can still be
+   killed by losing the building -- but it is out of the neighbour hash and out
+   of the update loop, so as far as the map is concerned it is not there. */
+function garrisonCap(b){ const B=BLD[b.kind]; return (B&&B.garr)||0; }
+function canGarrison(u,b){
+  return b&&b.alive&&b.built>=1&&b.owner===u.owner&&u.kind!=='ram'&&u.kind!=='mangonel'
+      && garrisonCap(b)>0 && (b.garr?b.garr.length:0)<garrisonCap(b);
+}
+function enterGarrison(u,b){
+  if(!canGarrison(u,b))return false;
+  (b.garr=b.garr||[]).push(u.id);
+  u.inside=b.id; u.path=null; u.flow=null; u.target=null; u.task=null; u.state='idle';
+  G.sel.delete(u.id);
+  return true;
+}
+function leaveGarrison(b,u){
+  if(!b.garr)return;
+  const i=b.garr.indexOf(u.id); if(i<0)return;
+  b.garr.splice(i,1);
+  u.inside=null;
+  const sp=spawnSpot(b);
+  u.x=sp.x; u.y=sp.y; u.state='idle';
+  /* the bell sent them in from a job; put them back on it. Resources carry no
+     `alive` flag -- they are gone from G.ents when they run out -- so the test
+     is the one the rest of the code uses for them, not a plain truth check. */
+  if(u.bellJob){
+    const t=u.bellJob; u.bellJob=null;
+    const tg=t.target!=null?G.ents.get(t.target):null;
+    if(tg&&tg.alive!==false&&(tg.type!=='r'||tg.amt>0)){ u.task=t.task; u.target=tg; u.state=t.task&&t.task.kind==='gather'?'gather':'idle'; }
+  }
+}
+function ungarrisonAll(b){
+  if(!b.garr||!b.garr.length)return 0;
+  const n=b.garr.length;
+  for(const id of b.garr.slice()){ const u=G.ents.get(id); if(u&&u.alive)leaveGarrison(b,u); else b.garr.splice(b.garr.indexOf(id),1); }
+  b.garr.length=0;
+  return n;
+}
+function cmdGarrison(units,b){
+  let n=0;
+  for(const u of units){
+    if(!canGarrison(u,b))continue;
+    u.task={kind:'garrison',id:b.id}; u.target=b; u.state='move'; u.path=null; u.flow=null;
+    n++;
+  }
+  return n;
+}
+/* The bell. Every villager drops what it is holding and runs for the nearest
+   building that will take it; ringing again sends them back to the job they
+   were on, which is the whole point -- a town that cannot go back to work after
+   a raid has lost anyway. */
+function ringBell(p){
+  p.bell=!p.bell;
+  if(p.bell){
+    let n=0;
+    const holds=G.blds.filter(b=>b.owner===p.id&&b.alive&&b.built>=1&&garrisonCap(b)>0);
+    if(!holds.length){ p.bell=false; if(p===G.human)toast('Nowhere to shelter — build a tower'); return 0; }
+    for(const u of G.units){
+      if(u.owner!==p.id||!u.alive||u.inside||u.kind!=='villager')continue;
+      let best=null,bd=1e9;
+      for(const b of holds){
+        if((b.garr?b.garr.length:0)>=garrisonCap(b))continue;
+        const d=dist2(u.x,u.y,b.x,b.y); if(d<bd){bd=d;best=b;}
+      }
+      if(!best)continue;
+      u.bellJob={task:u.task,target:u.target?u.target.id:null};
+      u.task={kind:'garrison',id:best.id}; u.target=best; u.state='move'; u.path=null; u.flow=null;
+      n++;
+    }
+    if(p===G.human){ sfx('alarm'); toast(n+' villagers taking shelter'); }
+    return n;
+  }
+  /* All clear turns out only the people the bell sent in. A garrison the player
+     put in a tower on purpose is a decision, not something to undo for them. */
+  let n=0;
+  for(const b of G.blds){
+    if(b.owner!==p.id||!b.alive||!b.garr)continue;
+    for(const id of b.garr.slice()){
+      const u=G.ents.get(id);
+      if(!u||!u.alive){ const i=b.garr.indexOf(id); if(i>=0)b.garr.splice(i,1); continue; }
+      if(!u.bellJob)continue;
+      leaveGarrison(b,u); n++;
+    }
+  }
+  for(const u of G.units){
+    if(u.owner!==p.id||!u.alive)continue;
+    if(u.task&&u.task.kind==='garrison'&&u.bellJob){    /* still on the way in */
+      const t=u.bellJob; u.bellJob=null;
+      const tg=t.target!=null?G.ents.get(t.target):null;
+      const ok=tg&&tg.alive!==false&&(tg.type!=='r'||tg.amt>0);
+      u.task=ok?t.task:null; u.target=ok?tg:null;
+      u.state=ok&&t.task&&t.task.kind==='gather'?'gather':'idle';
+    }
+  }
+  if(p===G.human){ sfx('select'); toast('Back to work'); }
+  return n;
 }
 function stopUnit(u){u.path=null;u.flow=null;u.task=null;u.target=null;u.amove=null;u.state='idle';}
 /* ---------- commands ---------- */
@@ -2829,6 +2934,14 @@ function updateUnit(u,dt){
         if(!u.path||u.repathT<=0){u.repathT=1.2; if(!moveTo(u,b.x,b.y,b)){u.task=null;u.state='idle';}} }
       break;
     }
+    case 'garrison': {
+      const b=u.target;
+      if(!b||!b.alive||!canGarrison(u,b)){ u.task=null;u.target=null;u.state='idle';u.bellJob=null;break; }
+      if(dist(u.x,u.y,b.x,b.y)<=b.size*.55+1.1){ enterGarrison(u,b); break; }
+      u.repathT-=dt;
+      if(!u.path||u.repathT<=0){ u.repathT=1.0; if(!moveTo(u,b.x,b.y,b)){u.task=null;u.state='idle';u.bellJob=null;} }
+      break;
+    }
     case 'amove': {
       if(!u.path&&!u.flow){
         const b=blockingTarget(u,u.task.x,u.task.y);
@@ -3004,7 +3117,12 @@ function updateBld(b,dt){
       let tgt=null,bd=B.rng*B.rng;
       forNear(b.x,b.y,B.rng+2,(o)=>{if(o.alive&&o.owner!==b.owner){const dd=dist2(b.x,b.y,o.x,o.y);if(dd<bd){bd=dd;tgt=o;}}});
       if(tgt){ b.cd=B.rate; b.st={atk:B.atk,rng:B.rng};
-        const shots=B.arrows||1;
+        /* Everyone inside who can shoot puts an arrow through a window. It is
+           what makes a tower worth filling and a town centre worth running to,
+           and it is why the bell is a defence and not just a hiding place. */
+        let inside=0;
+        if(b.garr) for(const id of b.garr){ const g=G.ents.get(id); if(g&&g.alive&&g.st&&g.st.rng>2)inside++; }
+        const shots=Math.max(1,(B.arrows||0)+inside);
         for(let i=0;i<shots;i++){
           G.projs.push({x:b.x,y:b.y-1.4,sx:b.x,sy:b.y-1.4,tx:tgt.x,ty:tgt.y,t:-i*.09,dur:.32,
             dmg:Math.max(1,B.atk-((tgt.st&&tgt.st.pa)||0)),src:b,tgt,splash:0,kind:'arrow'});
@@ -3830,6 +3948,7 @@ function draw(dt){
     list.push(b);
   }
   for(const u of G.units){
+    if(u.inside)continue;
     if(u.x<x0-pad||u.x>x1+pad||u.y<y0-pad||u.y>y1+pad)continue;
     if(u.owner!==p.id&&!seenAt(p,u.x,u.y))continue;
     list.push(u);
@@ -4152,6 +4271,18 @@ function drawBuilding(b,sx,sy,z,p){
     ctx.fillStyle='rgba(8,6,4,.8)';ctx.fillRect(sx-15*z,sy-(b.size*13+27)*z,30*z,3.5*z);
     ctx.fillStyle='#d8a13a';ctx.fillRect(sx-15*z,sy-(b.size*13+27)*z,30*z*k,3.5*z);
   }
+  /* People inside are invisible by definition, so the building has to say so --
+     otherwise a full tower and an empty one look identical and you cannot tell
+     where your army went. */
+  if(b.garr&&b.garr.length&&z>0.5){
+    const gx=sx, gy=sy-(b.size*13+14)*z;
+    ctx.fillStyle='rgba(12,8,4,.72)';
+    ctx.beginPath();ctx.roundRect?ctx.roundRect(gx-11*z,gy-7*z,22*z,13*z,3*z):ctx.rect(gx-11*z,gy-7*z,22*z,13*z);
+    ctx.fill();
+    ctx.strokeStyle='rgba(216,161,58,.5)';ctx.lineWidth=1;ctx.stroke();
+    ctx.fillStyle='#e8d9b5'; ctx.font=`${9.5*z}px "Alegreya Sans",sans-serif`; ctx.textAlign='center';
+    ctx.fillText('▲ '+b.garr.length, gx, gy+3*z);
+  }
   if(b.kind==='wonder'&&b.built>=1){
     const left=Math.max(0,G.wonderTime-(G.time-b.wonderStart));
     ctx.fillStyle='#f3c869';ctx.font=`${13*z}px "Cinzel",serif`;ctx.textAlign='center';
@@ -4240,6 +4371,7 @@ function drawMinimap(){
     x.fillRect(sx-r/2,sy-r/2,r,r);
   }
   for(const u of G.units){
+    if(u.inside)continue;
     if(u.owner!==p.id&&!seenAt(p,u.x,u.y))continue;
     const [sx,sy]=proj(u.x,u.y);
     x.fillStyle=u.owner===p.id?'#cfe6a8':G.players[u.owner].color;
@@ -4462,6 +4594,7 @@ function entAt(sx,sy){
   const w=s2w(sx,sy);
   let best=null,bd=1e9;
   for(const u of G.units){
+    if(u.inside)continue;
     if(u.owner!==G.human.id&&!seenAt(G.human,u.x,u.y))continue;
     const ux=w2sx(u.x,u.y), uy=w2sy(u.x,u.y);
     const dx=sx-ux, dy=sy-(uy-16*cam.z);
@@ -4506,7 +4639,7 @@ function boxSelect(x0,y0,x1,y1,add){
   if(!add)G.sel.clear();
   let any=false, mil=[];
   for(const u of G.units){
-    if(u.owner!==G.human.id)continue;
+    if(u.owner!==G.human.id||u.inside)continue;
     const sx=w2sx(u.x,u.y), sy=w2sy(u.x,u.y)-14*cam.z;
     if(sx>=xa&&sx<=xb&&sy>=ya&&sy<=yb){ mil.push(u); any=true; }
   }
@@ -4558,6 +4691,11 @@ function issueOrder(sx,sy){
         if(v.length){cmdRepair(v,e);sfx('order');G.fx.push({k:'ping',x:e.x,y:e.y,t:0,life:.5});return true;} }
       else if(e.kind==='farm'&&e.food>0){ const v=units.filter(u=>u.kind==='villager');
         if(v.length){cmdGather(v,e);sfx('order');G.fx.push({k:'ping',x:e.x,y:e.y,t:0,life:.5});return true;} }
+      else if(garrisonCap(e)>0){
+        const n=cmdGarrison(units,e);
+        if(n){sfx('order');G.fx.push({k:'ping',x:e.x,y:e.y,t:0,life:.5});return true;}
+        if(units.length){toast('That is full');sfx('deny');return true;}
+      }
     }
   }
   cmdMove(units,w.x,w.y);
@@ -4784,6 +4922,15 @@ function glyph(name,size){
   x.strokeStyle=V;x.fillStyle=V;x.lineWidth=2.4;
   switch(name){
     case 'stop': x.fillStyle='#c4503c';x.fillRect(-8,-8,16,16); x.strokeStyle='#1b130a';x.strokeRect(-8,-8,16,16); break;
+    case 'bell': x.fillStyle=g;
+      x.beginPath();x.moveTo(-8,6);x.quadraticCurveTo(-8,-8,0,-9);x.quadraticCurveTo(8,-8,8,6);x.closePath();x.fill();
+      x.fillRect(-10,6,20,2.6);
+      x.beginPath();x.arc(0,11,2.4,0,6.28);x.fill();
+      x.strokeStyle='rgba(20,14,8,.6)';x.lineWidth=1.2;
+      x.beginPath();x.moveTo(-8,6);x.quadraticCurveTo(-8,-8,0,-9);x.quadraticCurveTo(8,-8,8,6);x.closePath();x.stroke(); break;
+    case 'out': x.strokeStyle=g;x.lineWidth=2.4;
+      x.beginPath();x.moveTo(-9,-9);x.lineTo(-9,9);x.lineTo(1,9);x.lineTo(1,-9);x.closePath();x.stroke();
+      x.beginPath();x.moveTo(1,0);x.lineTo(11,0);x.moveTo(7,-4);x.lineTo(11,0);x.lineTo(7,4);x.stroke(); break;
     case 'amove': x.strokeStyle=g;
       x.beginPath();x.moveTo(-10,8);x.lineTo(6,-8);x.moveTo(-6,-8);x.lineTo(10,8);x.stroke();
       x.beginPath();x.arc(0,0,11,0,6.28);x.strokeStyle='rgba(216,161,58,.5)';x.lineWidth=1.5;x.stroke(); break;
@@ -4946,6 +5093,14 @@ function buildCommands(){
           act:()=>{ if(queueUpg(b,k,lvl)){sfx('tap');refreshHUD(true);} }});
       }
     }
+    if(garrisonCap(b)>0&&b.garr&&b.garr.length){
+      cmds.push({icon:{g:'out'},t:'Empty ('+b.garr.length+')',
+        act:()=>{const n=ungarrisonAll(b);if(n){sfx('order');toast(n+' turned out');}refreshHUD(true);}});
+    }
+    if(b.kind==='tc'){
+      cmds.push({icon:{g:'bell'},t:p.bell?'All clear':'Town bell',on:!!p.bell,
+        act:()=>{ringBell(p);refreshHUD(true);}});
+    }
     if(b.queue.length){
       cmds.push({icon:{g:'del'},t:'Cancel',act:()=>{const it=b.queue.pop();if(it&&it.cost)refund(p,it.cost);refreshHUD(true);}});
     }
@@ -4954,6 +5109,10 @@ function buildCommands(){
   }
   cmds.push({icon:{g:'idle'},t:'Idle',act:()=>cycleIdle()});
   cmds.push({icon:{b:'tc'},t:'Town',act:()=>{const tc=G.blds.find(x2=>x2.owner===p.id&&x2.kind==='tc');if(tc){centerOn(tc.x,tc.y);selectEnt(tc,false);}}});
+  /* The bell has to be one tap away from anywhere -- by the time you have
+     hunted for the town centre the raid is over. */
+  cmds.push({icon:{g:'bell'},t:p.bell?'All clear':'Bell',on:!!p.bell,
+    act:()=>{ringBell(p);refreshHUD(true);}});
   cmds.push({icon:{g:'mil'},t:'Army',act:()=>{G.sel.clear();
     for(const u of G.units)if(u.owner===p.id&&u.kind!=='villager')G.sel.add(u.id);
     if(G.sel.size){const f=G.ents.get([...G.sel][0]);centerOn(f.x,f.y);sfx('select');}else toast('No military units');
@@ -5461,7 +5620,7 @@ let acc=0;
 function simStep(){
   G.tick++; G.time+=TICK;
   rebuildHash();
-  for(let i=G.units.length-1;i>=0;i--){const u=G.units[i];if(u.alive)updateUnit(u,TICK);}
+  for(let i=G.units.length-1;i>=0;i--){const u=G.units[i];if(u.alive&&!u.inside)updateUnit(u,TICK);}
   for(let i=G.blds.length-1;i>=0;i--){const b=G.blds[i];if(b.alive)updateBld(b,TICK);}
   stepAnimals(TICK);
   updateProjectiles(TICK); updateFx(TICK);
