@@ -650,6 +650,73 @@ function makeTile(type,ox,oy,noise,noise2){
   x.globalAlpha=1;
   return c;
 }
+/* ---------- terrain from corners ----------
+   A tile whose four corners are all the same terrain is that terrain. A tile
+   whose corners differ is where a boundary passes through, and the boundary is
+   drawn inside the tile rather than around it: each corner pulls its own
+   terrain over the tile with a bilinear weight, the weights are compared, and
+   the winner takes the pixel. The line that falls out is a curve across the
+   ground, not the edge of a diamond, and it is continuous from tile to tile
+   because neighbours share the corners that drew it.
+
+   Every distinct set of four corner types is built once and kept. A map turns
+   out to use a few hundred of them, because corners next to each other are
+   usually the same. */
+const BLEND={cache:new Map(),built:0};
+function cornT(x,y){
+  if(!G.cornT)return TT.GRASS;
+  const CW=G.w+1;
+  return G.cornT[clamp(y,0,G.h)*CW+clamp(x,0,G.w)];
+}
+/* Each terrain gets its own push on the contour, so every pair of them meets
+   along a differently shaped line rather than all of them sharing one. */
+const TT_JITTER=[0.9,-0.7,0.45,-0.25,0.65,-0.5,0.3,-0.85];
+function blendTile(a,b,c,d,vari){
+  const key=a|(b<<3)|(c<<6)|(d<<9)|((vari&3)<<12);
+  let out=BLEND.cache.get(key); if(out)return out;
+  const types=[a,b,c,d];
+  const [cvo,xo]=cv(TW,TH);
+  /* whichever terrain holds the most corners is the ground the rest sits on */
+  const share={}; for(const t of types) share[t]=(share[t]||0)+1;
+  let base=types[0];
+  for(const t of types) if(share[t]>share[base]||(share[t]===share[base]&&TT_PRIO[t]<TT_PRIO[base])) base=t;
+  const artFor=(t,k)=> (ART.waterF&&ART.waterF[t])? ART.waterF[t][(k%WATER_VARIANTS)*WATER_FRAMES]
+                                                    : ART.tiles[t][k%12];
+  xo.drawImage(artFor(base,vari*5),0,0);
+  const img=xo.getImageData(0,0,TW,TH), od=img.data;
+  const srcs={};
+  for(const t of types) if(t!==base&&!srcs[t]){
+    const [cc,xx]=cv(TW,TH); xx.drawImage(artFor(t,vari*5+t*3),0,0);
+    srcs[t]=xx.getImageData(0,0,TW,TH).data;
+  }
+  const en=makeNoise(5300+(key&1023));
+  for(let py=0;py<TH;py++){
+    for(let px=0;px<TW;px++){
+      const i=(py*TW+px)*4;
+      if(od[i+3]<8)continue;
+      /* tile coordinates: u runs along world x, v along world y */
+      const ix=(px+.5)/THW-1, iy=(py+.5)/THH;
+      const u=clamp((ix+iy)*.5,0,1), v=clamp((iy-ix)*.5,0,1);
+      const w=[(1-u)*(1-v), u*(1-v), u*v, (1-u)*v];
+      /* One noise sample, pushed a different way for each terrain. Perturbing
+         the contour is what makes two terrains interlock in fingers; fading one
+         over the other only blurs the diamond it was already drawing. */
+      const n=(fbm(en,px*.10,py*.20,3,2.2,.55)-0.5)*0.42;
+      let bestT=-1,bestW=-9;
+      for(let k=0;k<4;k++){
+        const t=types[k], ww=w[k]+n*TT_JITTER[t];
+        if(ww>bestW){bestW=ww;bestT=t;}
+      }
+      if(bestT===base)continue;
+      const sd=srcs[bestT]; if(!sd)continue;
+      od[i]=sd[i]; od[i+1]=sd[i+1]; od[i+2]=sd[i+2];
+    }
+  }
+  xo.putImageData(img,0,0);
+  BLEND.built++;
+  BLEND.cache.set(key,cvo);
+  return cvo;
+}
 /* feathered edge overlay used where a higher-priority terrain meets a lower one */
 /* A smooth radial ramp still fades along the diamond, so the boundary keeps the
    diamond's shape and the ground reads as a grid of tiles. The reference has no
@@ -711,16 +778,27 @@ function makeFoam(dir){
   return c;
 }
 const WATER_VARIANTS=4, WATER_FRAMES=6;
+/* Deep water and the shallows are separate palettes but only one of them was
+   ever drawn -- every wet tile used the deep frames, so the shelf a coast
+   should have simply was not there. Both animate now, and the blend reads its
+   water pixels from the same frames so a tile that is all water and a tile that
+   is half water are the same colour where they meet. */
 /* Six frames all cut from the same patch of noise meant open sea was six tiles
    repeating, and the repeat was plain at any distance. Each spatial variant now
    comes from a different part of the field and carries its own swell phase, so
    the sea is 24 tiles deep and the eye finds no period in it. */
 function makeWaterFrames(){
-  const n=makeNoise(4242), n2=makeNoise(999);
+  ART.waterF={};
+  for(const wt of [TT.WATER,TT.SHALLOW]) ART.waterF[wt]=makeWaterSet(wt);
+  ART.water=ART.waterF[TT.WATER];
+}
+function makeWaterSet(wt){
+  const out=[];
+  const n=makeNoise(4242+wt*17), n2=makeNoise(999+wt*31);
   for(let v=0;v<WATER_VARIANTS;v++){
     for(let f=0;f<WATER_FRAMES;f++){
       const [c,x]=cv(TW,TH);
-      const base=makeTile(TT.WATER, v*613+f*3, v*457+v*v*29, n, n2);
+      const base=makeTile(wt, v*613+f*3, v*457+v*v*29, n, n2);
       x.drawImage(base,0,0);
       x.save();
       x.beginPath();x.moveTo(THW,0);x.lineTo(TW,THH);x.lineTo(THW,TH);x.lineTo(0,THH);x.closePath();x.clip();
@@ -738,9 +816,10 @@ function makeWaterFrames(){
         x.beginPath(); x.moveTo(gx,gy); x.lineTo(gx+len,gy-len*0.5); x.stroke();
       }
       x.restore();x.globalAlpha=1;
-      ART.water.push(c);
+      out.push(c);
     }
   }
+  return out;
 }
 function forgeTerrain(){
   const n=makeNoise(1337), n2=makeNoise(8081);
@@ -1703,7 +1782,7 @@ const inMap=(x,y)=> x>=0&&y>=0&&x<G.w&&y<G.h;
 const tileAt=(x,y)=> inMap(x,y)? G.tile[idx(x,y)] : TT.WATER;
 /* How far a tile is raised on screen, in unzoomed pixels. Purely visual: the
    simulation stays on a flat grid, so pathing and placement are untouched. */
-const LIFT=16;
+const LIFT=0;   /* ground is drawn flat; see the terrain pass for why */
 /* Anything standing on the ground reads its height the same way the ground is
    drawn: bilinear between the four corners it is standing between. A unit
    crossing a slope then rises with it instead of stepping tile to tile, and
@@ -1729,34 +1808,60 @@ function genMap(size,seed){
      with relief instead of as one flat plane */
   G.hgt=new Float32Array(N);
   const el=makeNoise(seed*7+1), mo=makeNoise(seed*13+5), fo=makeNoise(seed*29+3), wo=makeNoise(seed*37+11);
+  /* The world is a continuous field. It has always been one -- elevation and
+     moisture are noise, and noise has no notion of a tile -- but it used to be
+     read once per tile and stored as one number, which is what made every
+     coastline and every meadow edge a staircase of diamonds. Sampling it at any
+     position instead lets the grid keep its job (where a building may stand,
+     which tile a unit occupies) while the map stops inheriting its shape. */
+  const elevAt=(fx,fy)=>{
+    const e=fbm(el,fx*.055,fy*.055,4,2.0,.5);
+    const edge=Math.min(fx,fy,size-1-fx,size-1-fy)/(size*.5);
+    return e-(1-clamp(edge*2.7,0,1))*.55;
+  };
+  const typeAt=(fx,fy)=>{
+    const v=elevAt(fx,fy);
+    if(v<.315)return TT.WATER;
+    if(v<.362)return TT.SHALLOW;
+    if(v<.392)return TT.SAND;
+    /* The warp has to bend the biome boundaries, not overrun them. At the old
+       amplitude it moved the sample point faster than the coordinate itself
+       did, so the domain folded back on itself and the map came out in one-tile
+       diagonal stripes; and both axes were warped by the same field offset
+       along the diagonal, which is the direction the stripes ran. Keep the
+       warp's gradient under the base gradient and give each axis its own. */
+    const wx=fx*.085+fbm(fo,fx*.03,fy*.03,2,2,.5)*2.0, wy=fy*.085+fbm(wo,fx*.03,fy*.03,2,2,.5)*2.0;
+    /* Two octaves, and quiet ones: fine detail in a field about to be
+       thresholded does not add detail, it makes the threshold cross back and
+       forth along the gradient and every crossing is a sliver of the wrong
+       biome. Biomes want to be broad; the texture comes from the tiles. */
+    const m=fbm(mo,wx,wy,2,2,.38);
+    /* Bare earth is what a settlement wears into the ground, not a biome. */
+    if(fbm(fo,fx*.13,fy*.13+70,2,2,.5)>.76 && m<.42) return TT.ROCK;
+    return m>.58? TT.MEADOW : (m<.22? TT.DIRT : TT.GRASS);
+  };
+  /* The drawn map is the field read at tile corners. A corner is shared by the
+     four tiles around it, so a boundary runs through tiles rather than around
+     them and comes out as a line across the ground instead of a step. */
+  const CW=size+1;
+  G.cornT=new Uint8Array(CW*CW);
+  for(let y=0;y<=size;y++)for(let x=0;x<=size;x++) G.cornT[y*CW+x]=typeAt(x,y);
+  /* The played map is one type per tile, because a unit stands on a tile and a
+     building covers whole ones. It is the field read at the tile's middle, with
+     the corners given a veto on water so nothing walks out onto the sea. */
   for(let y=0;y<size;y++)for(let x=0;x<size;x++){
-    const e=fbm(el,x*.055,y*.055,4,2.0,.5);
-    const edge=Math.min(x,y,size-1-x,size-1-y)/(size*.5);
-    const v=e-(1-clamp(edge*2.7,0,1))*.55;
-    let t;
-    G.hgt[idx(x,y)] = clamp((v-.395)/.42,0,1);
-    if(v<.30) t=TT.WATER; else if(v<.35) t=TT.SHALLOW; else if(v<.395) t=TT.SAND;
-    else { /* domain-warped moisture keeps biome edges organic rather than banded */
-      /* The warp has to bend the biome boundaries, not overrun them. At the old
-         amplitude it moved the sample point faster than the coordinate itself
-         did, so the domain folded back on itself and the map came out in
-         one-tile diagonal stripes; and both axes were warped by the same field
-         offset along the diagonal, which is the direction the stripes ran.
-         Keep the warp's gradient under the base gradient and give each axis its
-         own field. */
-      const wx=x*.085+fbm(fo,x*.03,y*.03,2,2,.5)*2.0, wy=y*.085+fbm(wo,x*.03,y*.03,2,2,.5)*2.0;
-      /* Two octaves, and quiet ones. Fine detail in a field that is about to be
-         hard-thresholded does not add detail to the map -- it makes the
-         threshold cross back and forth along the field's gradient, and every
-         one of those crossings is a stripe of the wrong biome a tile or two
-         wide. Biomes want to be broad; the texture comes from the tiles. */
-      const m=fbm(mo,wx,wy,2,2,.38);
-      /* Bare earth is what a settlement wears into the ground, not a biome:
-         as a third of the open map it turned the countryside into a patchwork
-         of loud tan and green blobs, which is not how the reference's ground
-         reads at all -- there it is one continuous surface that varies. */
-      t = m>.58? TT.MEADOW : (m<.22? TT.DIRT : TT.GRASS);
-      if(fbm(fo,x*.13,y*.13+70,2,2,.5)>.76 && m<.42) t=TT.ROCK; }
+    G.hgt[idx(x,y)] = clamp((elevAt(x+.5,y+.5)-.395)/.42,0,1);
+    /* Whether a tile can be walked on comes from its corners and nothing else,
+       so what you see and what you may walk on can never disagree: three wet
+       corners and it is water, otherwise it is land and the middle only decides
+       which kind. A tile with one or two wet corners draws a wedge of sea and
+       is still walkable, which is how a shoreline should behave. */
+    let wet=0;
+    for(const [cx,cy] of [[x,y],[x+1,y],[x,y+1],[x+1,y+1]])
+      if(!TT_PASS[G.cornT[cy*CW+cx]])wet++;
+    let t=typeAt(x+.5,y+.5);
+    if(wet>=3) t = (wet===4&&t===TT.WATER)? TT.WATER : TT.SHALLOW;
+    else if(!TT_PASS[t]) t=TT.SAND;
     G.tile[idx(x,y)]=t;
   }
   /* Despeckle. A threshold on a continuous field speckles wherever the field
@@ -1778,10 +1883,12 @@ function genMap(size,seed){
         c[v]+=(dx&&dy)?1:2;
         if(c[v]>bn){bn=c[v];best=v;}
       }
+      /* Land only. Passability belongs to the corners now, and a despeckle that
+         could flip a tile in or out of the water would put the map you walk on
+         at odds with the map you see. */
       if(best===t||bn<=6)continue;
+      if(TT_PASS[t]!==TT_PASS[best])continue;
       G.tile[i]=best;
-      if(t===TT.WATER||t===TT.SHALLOW||best===TT.WATER||best===TT.SHALLOW)
-        G.hgt[i]=(G.hgt[idx(x+1,y)]+G.hgt[idx(x-1,y)]+G.hgt[idx(x,y+1)]+G.hgt[idx(x,y-1)])/4;
     }
   }
   buildCorners();
@@ -2301,6 +2408,20 @@ function makeClutter(b){
 /* A settlement should sit on worn earth, not untouched meadow -- that trodden
    ground around and between buildings is most of why a town reads as lived in.
    Falls off with distance so the edges stay ragged rather than a neat square. */
+/* Wear has to be written to both maps. The tile grid is what the game plays on
+   and the corner field is what you see, and a change to one that never reaches
+   the other is a road nobody can see or a road nobody can walk. */
+function paintGround(x,y,t){
+  if(!inMap(x,y))return;
+  G.tile[idx(x,y)]=t;
+  if(!G.cornT)return;
+  const CW=G.w+1;
+  for(const [cx,cy] of [[x,y],[x+1,y],[x,y+1],[x+1,y+1]]){
+    const ci=cy*CW+cx;
+    /* never pave over water: a corner of sea inside a town is still sea */
+    if(TT_PASS[G.cornT[ci]]) G.cornT[ci]=t;
+  }
+}
 function wearGround(b){
   if(b.kind==='farm')return;
   /* the civic buildings get a paved apron, which is what the reference puts at
@@ -2317,7 +2438,7 @@ function wearGround(b){
       if(tt===TT.WATER||tt===TT.SHALLOW||tt===TT.ROCK)continue;
       const d=Math.max(Math.abs(x-(b.tx+b.size/2-.5)),Math.abs(y-(b.ty+b.size/2-.5)));
       if(d<=b.size/2+0.5 || hash2(x*11+3,y*17+7)<clamp(1-(d-b.size/2)/1.6,0,1)*0.55)
-        G.tile[i]=TT.COBBLE;
+        paintGround(x,y,TT.COBBLE);
     }
   }
   const r=b.size+1;
@@ -2328,7 +2449,7 @@ function wearGround(b){
     const inside = x>=b.tx&&x<b.tx+b.size&&y>=b.ty&&y<b.ty+b.size;
     const d=Math.max(Math.abs(x-(b.tx+b.size/2-.5)),Math.abs(y-(b.ty+b.size/2-.5)));
     const chance = inside?1 : clamp(1-(d-b.size/2)/(r+.5),0,1)*0.8;
-    if(hash2(x*7+1,y*13+5)<chance) G.tile[i]=TT.DIRT;
+    if(hash2(x*7+1,y*13+5)<chance) paintGround(x,y,TT.DIRT);
   }
   G.tileGen=(G.tileGen||0)+1;
 }
@@ -3876,52 +3997,44 @@ function draw(dt){
       if(!p.explored[i])continue;
       const t=G.tile[i];
       const sx=w2sx(x,y)-tw/2, sy=w2sy(x,y);
+      /* What is drawn here comes from the four corners, not from the tile's own
+         type. Where they agree it is that terrain; where they differ the
+         boundary runs through this tile and blendTile draws it. */
+      const ca=cornT(x,y), cb=cornT(x+1,y), cc2=cornT(x+1,y+1), cd=cornT(x,y+1);
+      const uniform = ca===cb&&cb===cc2&&cc2===cd;
       let img;
-      if(t===TT.WATER||t===TT.SHALLOW)
-        img=ART.water[((hash2(x*11+3,y*13+7)*WATER_VARIANTS)|0)*WATER_FRAMES
+      if(uniform && (ca===TT.WATER||ca===TT.SHALLOW))
+        img=ART.waterF[ca][((hash2(x*11+3,y*13+7)*WATER_VARIANTS)|0)*WATER_FRAMES
                       + ((wf+((x*3+y*5)%WATER_FRAMES))%WATER_FRAMES)];
-      else img=ART.tiles[t][(hash2(x,y)*12)|0];
-      /* Warp the tile onto its own four corners instead of sliding a flat
-         diamond up by one number. Only screen y moves, so the displacement over
-         the tile is a plane and one transform draws it -- no clipping, no
-         second pass. Neighbours share corners, so the planes meet along their
-         shared edges and the ground comes out as one surface rather than a
-         stack of blocks with a riser at every tile. */
-      const kz=LIFT*z;
-      const dN=-cornH(x,y)*kz,     dE=-cornH(x+1,y)*kz,
-            dS=-cornH(x+1,y+1)*kz, dW=-cornH(x,y+1)*kz;
-      const du=(dE-dW)/TW, dv=(dS-dN)/TH;
-      const dC=(dN+dS+dW+dE)*0.25;
-      const d0=dC-du*THW-dv*THH;
-      ctx.save();
-      ctx.transform(1,du,0,1+dv,sx,sy+d0);
-      ctx.drawImage(img,0,0,tw+1,th+1);
-      ctx.restore();
-      const lift=-dC;
-      /* soft transitions with higher-priority neighbours (not worth it zoomed out) */
+      else if(uniform) img=ART.tiles[ca][(hash2(x,y)*12)|0];
+      else img=blendTile(ca,cb,cc2,cd,(hash2(x*7+1,y*11+5)*4)|0);
+      /* Drawn flat. Displacing each tile by its own height is what put units
+         on a staircase, and the fix for that -- warping every tile onto its
+         four corners -- cannot be done in one transform, because no plane
+         passes through four corners that are not coplanar, and doing it in two
+         clipped triangles leaves an antialiased hairline along every edge
+         instead. Relief was buying a few pixels of undulation for a grid of
+         seams and a class of movement bug. The land reads as land through the
+         shape of its terrain, which is now drawn from the corners and owes
+         nothing to the grid. */
+      ctx.drawImage(img,sx,sy,tw+1,th+1);
+      const lift=0;
+      /* Surf sits where the waterline actually runs, which the corners know:
+         a tile with some wet corners and some dry ones is the shore. The old
+         pass looked at whole neighbouring tiles and could only put foam along
+         a tile edge. */
       if(z<0.62)continue;
-      const pr=TT_PRIO[t];
-      const nb=[[0,-1,0],[1,0,1],[0,1,2],[-1,0,3]];
-      for(let k=0;k<4;k++){
-        const nx=x+nb[k][0], ny=y+nb[k][1];
-        if(!inMap(nx,ny))continue;
-        const nt=G.tile[idx(nx,ny)];
-        if(nt===TT.WATER||nt===TT.SHALLOW){
-          /* surf on the land side of the waterline, drifting with the swell */
-          if(t!==TT.WATER&&t!==TT.SHALLOW&&ART.foam){
-            const sw=0.55+0.45*Math.sin(G.time*1.5+(x*2+y*3));
-            ctx.globalAlpha=sw*0.8;
-            ctx.drawImage(ART.foam[nb[k][2]],sx,sy-lift,tw+1,th+1);
-            ctx.globalAlpha=1;
-          }
-          continue;
+      if(!uniform&&ART.foam){
+        let wetC=0,dryC=0;
+        for(const q of [ca,cb,cc2,cd]) (TT_PASS[q]?dryC++:wetC++);
+        if(wetC&&dryC){
+          const sw=0.55+0.45*Math.sin(G.time*1.5+(x*2+y*3));
+          /* toward whichever side the water is on */
+          const dir = !TT_PASS[ca]?3 : !TT_PASS[cb]?0 : !TT_PASS[cc2]?1 : 2;
+          ctx.globalAlpha=sw*0.7;
+          ctx.drawImage(ART.foam[dir],sx,sy-lift,tw+1,th+1);
+          ctx.globalAlpha=1;
         }
-        /* Equal priorities used to skip the blend entirely, which left every
-           grass/meadow boundary -- most of the map -- as a hard diamond edge.
-           Break the tie on type so one of the pair always covers the other. */
-        if(TT_PRIO[nt]<pr || (TT_PRIO[nt]===pr && nt<=t))continue;
-        const ev=ART.edges[nt][nb[k][2]];
-        ctx.drawImage(ev[(hash2(x*5+k,y*7+1)*4)|0],sx,sy-lift,tw+1,th+1);
       }
     }
   }
