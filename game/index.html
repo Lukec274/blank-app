@@ -1423,7 +1423,10 @@ function sheetFrame(kind,ci,row,col){
   ART.unit.set(key,c); return c;
 }
 /* which baked clip a unit should be showing right now */
-function sheetAnim(u,S){
+/* the clip sheetAnim would pick, exposed so a probe can check what the legs are
+   actually doing without re-deriving the rule */
+function sheetAnimName(u,S){ return sheetAnim(u,S,true); }
+function sheetAnim(u,S,nameOnly){
   let st='idle';
   /* Travelling always reads as walking. u.state is only set to 'gather' on
      arrival and never cleared, so a villager that had chopped once kept the
@@ -1444,6 +1447,7 @@ function sheetAnim(u,S){
     } else st='attack';
   }
   else if(travelling||u.state==='move') st='walk';
+  if(nameOnly)return st;
   const info=S.states[st]||S.states.idle;
   let k;
   if(st==='walk') k=Math.floor(u.ft*1.7)%info.n;
@@ -2658,12 +2662,26 @@ function findRes(x,y,kind,maxR){
 function moveTo(u,x,y,adjTo){
   const gx=x|0,gy=y|0;
   let goal={x:gx,y:gy};
-  if(!passableFor(gx,gy,adjTo?adjTo.id:0,u.owner)){
-    const o=nearestOpen(gx,gy,adjTo?adjTo.id:0,7,u.owner); if(!o){u.path=null;return false;} goal=o;
+  /* Where it may walk *through* and where it may stand are different questions.
+     Ignoring the target's id answered both, so the route ended on the target's
+     own tile -- which the pathfinder allowed and the walker then refused, since
+     stepping checks occupancy for real. The unit ground against the tree for as
+     long as it worked there, holding a route it could never finish. Resolve the
+     standing spot without the exemption; keep it for the route itself, so a
+     villager can still cross its own building site to reach the far side. */
+  if(!passableFor(gx,gy,0,u.owner)){
+    const o=nearestOpen(gx,gy,0,7,u.owner); if(!o){u.path=null;return false;} goal=o;
   }
   const p=findPath(u.x,u.y,goal.x,goal.y,adjTo?adjTo.id:0,null,u.owner);
   if(!p||!p.length){ u.path=null; return false; }
-  u.path=p; u.pi=0; u.repathT=0; return true;
+  /* Do not touch repathT here. Callers set it to say how long this route should
+     stand -- `u.repathT=1.2; moveTo(...)` -- and zeroing it afterwards made the
+     next tick's `repathT<=0` true again, so the route was thrown away and rebuilt
+     thirty times a second. Every rebuild put the unit back on waypoint zero, and
+     when that waypoint happened to sit just inside the arrival threshold the unit
+     took the "arrived" branch every tick and never stepped at all: pinned half a
+     tile from where it started, animating, for as long as the job lasted. */
+  u.path=p; u.pi=0; u.ddBest=Infinity; u.noProgT=0; return true;
 }
 /* ---------- garrison ----------
    Somewhere to put people when the fighting reaches the town. A garrisoned unit
@@ -2771,7 +2789,7 @@ function groupOrder(units,x,y,taskKind){
   if(!f)return false;
   for(const u of units){
     u.task={kind:taskKind,x,y}; u.target=null; u.path=null; u.pi=0;
-    u.flow=f; u.flowGoal={x,y}; u.stuck=0; u.state='move';
+    u.flow=f; u.flowGoal={x,y}; u.stuck=0; u.state='move'; u.ddBest=Infinity; u.noProgT=0;
   }
   return true;
 }
@@ -3147,11 +3165,21 @@ function moveAlong(u,dt){
   const wp=u.path[u.pi];
   const last=u.pi>=u.path.length-1;
   let dx=wp.x-u.x, dy=wp.y-u.y, dd=Math.hypot(dx,dy);
-  if(dd < (last?0.30:0.55)){ u.pi++; if(u.pi>=u.path.length){u.path=null;u.stuckT=0;} animIdle(u,dt); return; }
+  if(dd < (last?0.30:0.55)){ u.pi++; u.ddBest=Infinity; u.noProgT=0;
+    if(u.pi>=u.path.length){u.path=null;u.stuckT=0;} animIdle(u,dt); return; }
   dx/=dd;dy/=dd;
   stepUnit(u,dx,dy,dt);
-  if(u.stuckT>0.7){                       /* wedged: plan a fresh route to the same goal */
-    u.stuckT=0;
+  /* Getting nowhere is not the same as not moving. A unit at a tile edge with
+     the way ahead shut steers left, then right, then left again -- it moves
+     every tick, so the stuck timer keeps resetting and it never asks for a new
+     route. It can do that for the rest of the game. Measure progress toward the
+     waypoint instead: distance that stops falling is stuck, however busy the
+     legs are. */
+  if(u.ddBest===undefined||u.ddBest===null)u.ddBest=Infinity;
+  if(dd<u.ddBest-0.05){ u.ddBest=dd; u.noProgT=0; }
+  else u.noProgT=(u.noProgT||0)+dt;
+  if(u.stuckT>0.7||u.noProgT>1.1){        /* wedged: plan a fresh route to the same goal */
+    u.stuckT=0; u.noProgT=0; u.ddBest=Infinity;
     const goal=u.path?u.path[u.path.length-1]:null;
     u.path=null;
     if(goal&&!moveTo(u,goal.x,goal.y)){
