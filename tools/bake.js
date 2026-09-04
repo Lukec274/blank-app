@@ -109,6 +109,18 @@ const PROPS={
   bld_themehall:{mesh:'building_tavern_blue.gltf',        tiles:2},
   bld_wonder:  {mesh:'building_church_blue.gltf',         tiles:4},
   dec_well:    {mesh:'building_well_blue.gltf',           px:56},
+  /* Walls run along one of the two tile axes, and in a fixed camera those are
+     two different silhouettes, so each piece is baked once per axis. The hex
+     pack's straight sections are flat panels, which is exactly what a square
+     grid wants. */
+  /* The panel is long in X and thin in Z, and with this camera three's X runs
+     down-right on screen while its Z runs down-left -- the same two directions
+     the tile grid's x and y do. So yaw 0 is a wall along tile x, yaw 90 one
+     along tile y, and nothing in between is grid-aligned. */
+  bld_wall_a:  {mesh:'wall_straight.gltf',      tiles:1, yaw:0},
+  bld_wall_b:  {mesh:'wall_straight.gltf',      tiles:1, yaw:90},
+  bld_gate_a:  {mesh:'wall_straight_gate.gltf', tiles:1, yaw:0},
+  bld_gate_b:  {mesh:'wall_straight_gate.gltf', tiles:1, yaw:90},
 };
 
 const UNITS={

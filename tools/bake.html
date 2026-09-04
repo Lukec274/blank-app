@@ -486,6 +486,10 @@ window.__bakeBeast=async function(cfg){
 window.__bakeProp=async function(cfg){
   const gltf=await load('./glb/'+cfg.mesh);
   const root=gltf.scene;
+  /* Turn the model on the spot before framing it. A wall piece has to be baked
+     once per axis it can run along, and the two are different silhouettes in a
+     fixed camera -- there is no mirroring that gets you the second one. */
+  if(cfg.yaw) root.rotation.y=cfg.yaw*Math.PI/180;
   scene.add(root); root.updateMatrixWorld(true);
   root.traverse(o=>{ if(o.isMesh){o.frustumCulled=false; o.castShadow=true; o.receiveShadow=true;
     if(cfg.hide&&cfg.hide.some(h=>o.name.indexOf(h)>=0))o.visible=false; } });
