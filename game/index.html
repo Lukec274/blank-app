@@ -538,12 +538,12 @@ const TT_PASS = [0,0,1,1,1,1,1,1];
 const TERRAIN = {
   [TT.WATER]:   {c:'#2f8fb4', c2:'#7fdcf2', spec:'water'},
   [TT.SHALLOW]: {c:'#63bcd4', c2:'#a8ecf6', spec:'water'},
-  [TT.SAND]:    {c:'#c99a6a', c2:'#f2d9ad', spec:'grain'},
-  [TT.GRASS]:   {c:'#74793f', c2:'#bbc17e', spec:'blades'},
-  [TT.MEADOW]:  {c:'#9a9053', c2:'#dbcf90', spec:'blades'},
-  [TT.DIRT]:    {c:'#a17851', c2:'#dfbc92', spec:'grain'},
+  [TT.SAND]:    {c:'#c08d55', c2:'#f0d49f', spec:'grain'},
+  [TT.GRASS]:   {c:'#6d7433', c2:'#bcc276', spec:'blades'},
+  [TT.MEADOW]:  {c:'#96883f', c2:'#dbcd85', spec:'blades'},
+  [TT.DIRT]:    {c:'#9c6f43', c2:'#e0bb8a', spec:'grain'},
   [TT.ROCK]:    {c:'#8c7f68', c2:'#cdbfa2', spec:'stone'},
-  [TT.COBBLE]:  {c:'#a58d74', c2:'#e5cfb4', spec:'cobble'},
+  [TT.COBBLE]:  {c:'#9c7d4e', c2:'#e8cea6', spec:'cobble'},
 };
 
 const ART = {tiles:{},edges:{},water:[],deco:{},unit:new Map(),bld:new Map(),icon:new Map()};
@@ -1256,23 +1256,32 @@ function initProps(){
    of its frame against 7% of ours, the largest colour gap left between us.
    So: roofs go terracotta, with a tenth of the owner's colour mixed in and the
    pennant enlarged, which keeps a town legible as yours without repainting it. */
-const ROOF=[0xbd,0x87,0x5e];
+/* Two ends of a terracotta ramp rather than one colour scaled by brightness.
+   Multiplying a single colour by a factor above 1 clips channels, and clipping
+   is desaturation: pushing the roofs up to the reference's brightness that way
+   turned them pale salmon. Interpolating between a dark tile and a light one
+   holds the saturation at every step of the modelling. */
+const ROOF_DK=[0x7d,0x4a,0x2e], ROOF_LT=[0xe0,0xa5,0x6e];
 function recolourTeam(x,w,h,ci){
   const t=hex(PCOL[ci]||PCOL[0]);
   const mix=0.12;
-  const c=[ROOF[0]*(1-mix)+t[0]*mix, ROOF[1]*(1-mix)+t[1]*mix, ROOF[2]*(1-mix)+t[2]*mix];
+  const dk=[ROOF_DK[0]*(1-mix)+t[0]*mix, ROOF_DK[1]*(1-mix)+t[1]*mix, ROOF_DK[2]*(1-mix)+t[2]*mix];
+  const lt=[ROOF_LT[0]*(1-mix)+t[0]*mix, ROOF_LT[1]*(1-mix)+t[1]*mix, ROOF_LT[2]*(1-mix)+t[2]*mix];
   const im=x.getImageData(0,0,w,h), d=im.data;
   for(let i=0;i<d.length;i+=4){
     if(d[i+3]<8)continue;
     const r=d[i],g=d[i+1],b=d[i+2];
     if(b>r+26 && b>g+16 && b>60){
       /* keep the shading of the original pixel, swap only the hue */
-      /* Normalised so the pack's mid-tone roof blue lands on the reference's
-         measured roof brightness rather than a stop and a half above it. */
-      const k=clamp((0.30*r+0.42*g+0.28*b)/152,0,1.30);
-      d[i]  =clamp(c[0]*k,0,255);
-      d[i+1]=clamp(c[1]*k,0,255);
-      d[i+2]=clamp(c[2]*k,0,255);
+      /* Sampling both pictures across the same hue window puts the reference's
+         roofs at V 0.77; the pack's own shading, carried over as-is, put ours a
+         stop below that. Where a pixel sits on the ramp comes from the pack's
+         luminance, so the modelling survives; where the ramp's ends sit comes
+         from the reference. */
+      const k=clamp((0.30*r+0.42*g+0.28*b)/165,0,1);
+      d[i]  =clamp(dk[0]+(lt[0]-dk[0])*k,0,255);
+      d[i+1]=clamp(dk[1]+(lt[1]-dk[1])*k,0,255);
+      d[i+2]=clamp(dk[2]+(lt[2]-dk[2])*k,0,255);
     } else if(b>r){
       /* The pack's stone is a cool blue-grey; the reference's is warm, hue 52
          against our 200 at much the same saturation. Rolling the small blue
