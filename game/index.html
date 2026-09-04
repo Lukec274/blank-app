@@ -746,23 +746,9 @@ function forgeTerrain(){
   for(const k of Object.keys(TERRAIN)){
     const t=+k; ART.tiles[t]=[];
     for(let v=0;v<12;v++) ART.tiles[t].push(makeTile(t, v*97+v*v*13, v*53+v*v*7, n, n2));
-    /* the cut face shown below a raised tile, so relief does not look like
-       sprites floating off the ground */
-    /* Each tile is pre-rendered with the earth column beneath it, so a raised
-       tile is one drawImage and there is no gap for the background to show
-       through. Filling gaps at draw time missed them -- that was the dark
-       dashes -- and doing it per pixel would cost thousands of calls a frame. */
-    ART.tilesCol=ART.tilesCol||{};
-    ART.tilesCol[t]=ART.tiles[t].map(src=>{
-      const [dk,dx]=cv(src.width,src.height);
-      dx.drawImage(src,0,0);
-      dx.globalCompositeOperation='source-atop';
-      dx.fillStyle='rgba(30,22,12,.34)'; dx.fillRect(0,0,src.width,src.height);
-      const [c2,x2]=cv(src.width,src.height+LIFT);
-      for(let o=LIFT;o>0;o--) x2.drawImage(dk,0,o);
-      x2.drawImage(src,0,0);
-      return c2;
-    });
+    /* The earth column under a raised tile is gone with the steps that needed
+       it: tiles now share their corner heights, so there is no cut face to
+       show and nothing for the background to show through. */
     ART.edges[t]=[0,1,2,3].map(d=>[0,1,2,3].map(v=>makeEdge(ART.tiles[t][v*3],d,v)));
     ART.foam=ART.foam||[0,1,2,3].map(makeFoam);
   }
@@ -1716,11 +1702,17 @@ const inMap=(x,y)=> x>=0&&y>=0&&x<G.w&&y<G.h;
 const tileAt=(x,y)=> inMap(x,y)? G.tile[idx(x,y)] : TT.WATER;
 /* How far a tile is raised on screen, in unzoomed pixels. Purely visual: the
    simulation stays on a flat grid, so pathing and placement are untouched. */
-const LIFT=10;
+const LIFT=16;
+/* Anything standing on the ground reads its height the same way the ground is
+   drawn: bilinear between the four corners it is standing between. A unit
+   crossing a slope then rises with it instead of stepping tile to tile, and
+   because the field is continuous the screen-to-world solve converges. */
 function liftAt(wx,wy){
-  if(!G.hgt)return 0;
-  const x=clamp(wx|0,0,G.w-1), y=clamp(wy|0,0,G.h-1);
-  return G.hgt[idx(x,y)]*LIFT;
+  if(!G.cornH)return 0;
+  const x0=Math.floor(wx), y0=Math.floor(wy);
+  const fx=wx-x0, fy=wy-y0;
+  const a=cornH(x0,y0), b=cornH(x0+1,y0), c=cornH(x0,y0+1), d=cornH(x0+1,y0+1);
+  return (a+(b-a)*fx + (c+(d-c)*fx - (a+(b-a)*fx))*fy)*LIFT;
 }
 const blocked=(x,y)=> !inMap(x,y) || !TT_PASS[G.tile[idx(x,y)]] || G.occ[idx(x,y)]!==0;
 
@@ -1741,14 +1733,7 @@ function genMap(size,seed){
     const edge=Math.min(x,y,size-1-x,size-1-y)/(size*.5);
     const v=e-(1-clamp(edge*2.7,0,1))*.55;
     let t;
-    /* Quantised into a few plateaus rather than left continuous. Every tile is
-       drawn as a flat diamond, so a continuous height means every tile on a
-       slope sits a fraction of a pixel above the one in front and shows a thin
-       dark riser -- which across open country is a set of regular stripes down
-       the screen, the same terracing the fixed-height skirt used to cause. In
-       plateaus the risers gather at the few places there is really a step, and
-       everywhere else neighbouring tiles are level and the ground is smooth. */
-    G.hgt[idx(x,y)] = Math.round(clamp((v-.395)/.42,0,1)*4)/4;
+    G.hgt[idx(x,y)] = clamp((v-.395)/.42,0,1);
     if(v<.30) t=TT.WATER; else if(v<.35) t=TT.SHALLOW; else if(v<.395) t=TT.SAND;
     else { /* domain-warped moisture keeps biome edges organic rather than banded */
       /* The warp has to bend the biome boundaries, not overrun them. At the old
@@ -1798,7 +1783,25 @@ function genMap(size,seed){
         G.hgt[i]=(G.hgt[idx(x+1,y)]+G.hgt[idx(x-1,y)]+G.hgt[idx(x,y+1)]+G.hgt[idx(x,y-1)])/4;
     }
   }
+  buildCorners();
   return {forest:fo};
+}
+/* Height sampled at tile corners rather than tile centres. The grid is square
+   because buildings and occupancy want it square, but the ground it stands on
+   has no reason to be a staircase: a corner is shared by the four tiles that
+   meet there, so giving every tile the height of its own four corners makes one
+   continuous surface out of the same square grid. */
+function buildCorners(){
+  const W=G.w+1;
+  G.cornH=new Float32Array(W*(G.h+1));
+  const at=(x,y)=>G.hgt[idx(clamp(x,0,G.w-1),clamp(y,0,G.h-1))];
+  for(let y=0;y<=G.h;y++)for(let x=0;x<=G.w;x++)
+    G.cornH[y*W+x]=(at(x-1,y-1)+at(x,y-1)+at(x-1,y)+at(x,y))*0.25;
+}
+function cornH(x,y){
+  if(!G.cornH)return 0;
+  const W=G.w+1;
+  return G.cornH[clamp(y,0,G.h)*W+clamp(x,0,G.w)];
 }
 function addRes(kind,tx,ty,amt,variant){
   if(!inMap(tx,ty)||G.occ[idx(tx,ty)]!==0||!TT_PASS[G.tile[idx(tx,ty)]])return null;
@@ -3753,23 +3756,23 @@ function draw(dt){
         img=ART.water[((hash2(x*11+3,y*13+7)*WATER_VARIANTS)|0)*WATER_FRAMES
                       + ((wf+((x*3+y*5)%WATER_FRAMES))%WATER_FRAMES)];
       else img=ART.tiles[t][(hash2(x,y)*12)|0];
-      const lift=liftAt(x,y)*z;
-      /* The earth column below a tile has to be as tall as the actual drop to
-         the ground in front of it, not a constant. Giving every raised tile the
-         full skirt turned a smooth slope into a flight of steps -- one dark band
-         per tile row, which is what the banding across open ground was. */
-      let skirt=0;
-      if(lift>0.4&&t!==TT.WATER&&t!==TT.SHALLOW){
-        const l1=inMap(x+1,y)?liftAt(x+1,y)*z:0, l2=inMap(x,y+1)?liftAt(x,y+1)*z:0;
-        skirt=clamp(lift-Math.min(l1,l2),0,LIFT*z);
-      }
-      const col=(skirt>0.6&&ART.tilesCol&&ART.tilesCol[t])
-                ? ART.tilesCol[t][(hash2(x,y)*12)|0] : null;
-      if(col){
-        const sh=Math.min(LIFT,Math.ceil(skirt/z));
-        ctx.drawImage(col,0,0,TW,TH+sh, sx,sy-lift,tw+1,(TH+sh)*z+1);
-      }
-      else    ctx.drawImage(img,sx,sy-lift,tw+1,th+1);
+      /* Warp the tile onto its own four corners instead of sliding a flat
+         diamond up by one number. Only screen y moves, so the displacement over
+         the tile is a plane and one transform draws it -- no clipping, no
+         second pass. Neighbours share corners, so the planes meet along their
+         shared edges and the ground comes out as one surface rather than a
+         stack of blocks with a riser at every tile. */
+      const kz=LIFT*z;
+      const dN=-cornH(x,y)*kz,     dE=-cornH(x+1,y)*kz,
+            dS=-cornH(x+1,y+1)*kz, dW=-cornH(x,y+1)*kz;
+      const du=(dE-dW)/TW, dv=(dS-dN)/TH;
+      const dC=(dN+dS+dW+dE)*0.25;
+      const d0=dC-du*THW-dv*THH;
+      ctx.save();
+      ctx.transform(1,du,0,1+dv,sx,sy+d0);
+      ctx.drawImage(img,0,0,tw+1,th+1);
+      ctx.restore();
+      const lift=-dC;
       /* soft transitions with higher-priority neighbours (not worth it zoomed out) */
       if(z<0.62)continue;
       const pr=TT_PRIO[t];
