@@ -4258,17 +4258,47 @@ function fmtTime(s){const m=(s/60)|0, ss=Math.floor(s%60);return m+':'+(ss<10?'0
 /* ============================================================
    AUDIO — small synth, no samples
    ============================================================ */
-const AUD={ctx:null,on:true,master:null,noise:null,last:{}};
+const AUD={ctx:null,on:true,master:null,dry:null,verb:null,noise:null,last:{}};
 function audioInit(){
   if(AUD.ctx)return;
   const AC=window.AudioContext||window.webkitAudioContext; if(!AC)return;
   AUD.ctx=new AC();
-  AUD.master=AUD.ctx.createGain(); AUD.master.gain.value=.30; AUD.master.connect(AUD.ctx.destination);
-  const len=AUD.ctx.sampleRate*1.2, buf=AUD.ctx.createBuffer(1,len,AUD.ctx.sampleRate), d=buf.getChannelData(0);
+  const C=AUD.ctx;
+  AUD.master=C.createGain(); AUD.master.gain.value=.30; AUD.master.connect(C.destination);
+  /* Everything the game plays is something being struck, plucked or blown in
+     the open air. A short synthetic room puts it all in one place -- without it
+     even well-shaped voices read as beeps, because nothing dry sounds like it
+     happened anywhere. */
+  const rl=(C.sampleRate*1.1)|0, imp=C.createBuffer(2,rl,C.sampleRate);
+  for(let ch=0;ch<2;ch++){
+    const d=imp.getChannelData(ch);
+    for(let i=0;i<rl;i++){
+      const t=i/rl;
+      d[i]=(Math.random()*2-1)*Math.pow(1-t,3.2)*(i<C.sampleRate*0.012?0.25:1);
+    }
+  }
+  try{
+    const cv=C.createConvolver(); cv.buffer=imp;
+    AUD.verb=C.createGain(); AUD.verb.gain.value=0.26;
+    AUD.verb.connect(cv); cv.connect(AUD.master);
+  }catch(e){ AUD.verb=null; }
+  /* a gentle roll-off so nothing gets that thin digital edge on the top */
+  const lp=C.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=7200; lp.Q.value=0.6;
+  AUD.dry=C.createGain(); AUD.dry.gain.value=1;
+  AUD.dry.connect(lp); lp.connect(AUD.master);
+  const len=C.sampleRate*1.2, buf=C.createBuffer(1,len,C.sampleRate), d=buf.getChannelData(0);
   for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
   AUD.noise=buf;
 }
-function tone(freq,dur,type,vol,slide,delay){
+/* every voice ends here, so the room and the roll-off apply once */
+function audioOut(node,send){
+  node.connect(AUD.dry||AUD.master);
+  if(AUD.verb&&send!==0){
+    const g=AUD.ctx.createGain(); g.gain.value=send==null?1:send;
+    node.connect(g); g.connect(AUD.verb);
+  }
+}
+function tone(freq,dur,type,vol,slide,delay,send){
   if(!AUD.on||!AUD.ctx)return;
   const t=AUD.ctx.currentTime+(delay||0);
   const o=AUD.ctx.createOscillator(), g=AUD.ctx.createGain();
@@ -4276,39 +4306,146 @@ function tone(freq,dur,type,vol,slide,delay){
   if(slide)o.frequency.exponentialRampToValueAtTime(Math.max(30,slide),t+dur);
   g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol==null?.3:vol,t+.008);
   g.gain.exponentialRampToValueAtTime(.0008,t+dur);
-  o.connect(g);g.connect(AUD.master);o.start(t);o.stop(t+dur+.02);
+  o.connect(g); audioOut(g,send); o.start(t);o.stop(t+dur+.02);
 }
-function noiseHit(dur,f0,f1,vol,q){
+function noiseHit(dur,f0,f1,vol,q,delay,send){
   if(!AUD.on||!AUD.ctx)return;
-  const t=AUD.ctx.currentTime;
+  const t=AUD.ctx.currentTime+(delay||0);
   const s=AUD.ctx.createBufferSource(); s.buffer=AUD.noise;
   const bp=AUD.ctx.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=q||1.2;
   bp.frequency.setValueAtTime(f0,t); bp.frequency.exponentialRampToValueAtTime(Math.max(60,f1||f0),t+dur);
   const g=AUD.ctx.createGain(); g.gain.setValueAtTime(vol||.25,t); g.gain.exponentialRampToValueAtTime(.0008,t+dur);
-  s.connect(bp);bp.connect(g);g.connect(AUD.master);s.start(t);s.stop(t+dur+.02);
+  s.connect(bp);bp.connect(g); audioOut(g,send); s.start(t);s.stop(t+dur+.02);
+}
+/* ---------- voices ----------
+   The old set was square and sawtooth oscillators at fixed pitches, which is a
+   games console, not a building site. Everything here is modelled on how the
+   real thing makes its noise instead: a transient plus a body that rings and
+   dies. What changes between wood, stone and metal is how long the body rings
+   and how far its partials sit from a harmonic series. */
+
+/* Something hit: a click of noise for the strike, then partials for the body.
+   `ring` is how long it sustains, `spread` how inharmonic the partials are --
+   near 1 for a struck plank, further out for iron. */
+function struck(f,vol,ring,spread,delay,timbre){
+  if(!AUD.on||!AUD.ctx)return;
+  const C=AUD.ctx, t=C.currentTime+(delay||0);
+  const s=C.createBufferSource(); s.buffer=AUD.noise;
+  const bp=C.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=1.1; bp.frequency.value=f*2.2;
+  const ng=C.createGain(); ng.gain.setValueAtTime(vol*0.9,t);
+  ng.gain.exponentialRampToValueAtTime(.0006,t+0.035);
+  s.connect(bp);bp.connect(ng);audioOut(ng,0.5);s.start(t);s.stop(t+.06);
+  const parts=[1,spread*1.62,spread*2.31];
+  parts.forEach((m,i)=>{
+    const o=C.createOscillator(), g=C.createGain();
+    o.type=timbre||'triangle'; o.frequency.setValueAtTime(f*m,t);
+    const v=vol*(i===0?0.7:0.28/i);
+    g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(v,t+.004);
+    g.gain.exponentialRampToValueAtTime(.0006,t+ring*(i===0?1:0.6));
+    o.connect(g);audioOut(g);o.start(t);o.stop(t+ring+.03);
+  });
+}
+/* A string let go: the noise burst is the release, the resonance is the string.
+   Nothing sustains, which is what separates a bowstring from a beep. */
+function pluck(f,vol,dur,delay){
+  if(!AUD.on||!AUD.ctx)return;
+  const C=AUD.ctx, t=C.currentTime+(delay||0);
+  const s=C.createBufferSource(); s.buffer=AUD.noise;
+  const bp=C.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=14; bp.frequency.value=f;
+  const g=C.createGain(); g.gain.setValueAtTime(vol,t);
+  g.gain.exponentialRampToValueAtTime(.0006,t+dur);
+  s.connect(bp);bp.connect(g);audioOut(g,0.7);s.start(t);s.stop(t+dur+.02);
+}
+/* A bell is the one instrument whose partials are famously not a harmonic
+   series -- the minor third between the hum and the strike is why it sounds
+   like a bell and a stack of sine waves does not. */
+const BELL_PARTIALS=[[0.5,0.30,1.0],[1,0.55,0.9],[1.19,0.30,0.7],[1.5,0.22,0.55],[2,0.30,0.45],[2.5,0.14,0.3],[3.0,0.10,0.22]];
+function bell(f,vol,dur,delay){
+  if(!AUD.on||!AUD.ctx)return;
+  const C=AUD.ctx, t=C.currentTime+(delay||0);
+  const s=C.createBufferSource(); s.buffer=AUD.noise;
+  const bp=C.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=2; bp.frequency.value=f*3.4;
+  const ng=C.createGain(); ng.gain.setValueAtTime(vol*0.5,t);
+  ng.gain.exponentialRampToValueAtTime(.0006,t+0.05);
+  s.connect(bp);bp.connect(ng);audioOut(ng,0.8);s.start(t);s.stop(t+.08);
+  for(const [m,a,d] of BELL_PARTIALS){
+    const o=C.createOscillator(), g=C.createGain();
+    o.type='sine'; o.frequency.setValueAtTime(f*m,t);
+    g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol*a,t+.006);
+    g.gain.exponentialRampToValueAtTime(.0004,t+dur*d);
+    o.connect(g);audioOut(g,0.9);o.start(t);o.stop(t+dur*d+.05);
+  }
+}
+/* A reed blown: a filtered sawtooth that takes a moment to speak and wavers,
+   which is what a shawm does and an oscillator on its own does not. */
+function horn(f,vol,dur,delay){
+  if(!AUD.on||!AUD.ctx)return;
+  const C=AUD.ctx, t=C.currentTime+(delay||0);
+  const o=C.createOscillator(); o.type='sawtooth'; o.frequency.setValueAtTime(f,t);
+  const lfo=C.createOscillator(), lg=C.createGain();
+  lfo.frequency.value=5.2; lg.gain.value=f*0.008;
+  lfo.connect(lg); lg.connect(o.frequency); lfo.start(t); lfo.stop(t+dur+.05);
+  const lp=C.createBiquadFilter(); lp.type='lowpass'; lp.Q.value=1.2;
+  lp.frequency.setValueAtTime(f*2.2,t);
+  lp.frequency.linearRampToValueAtTime(f*4.5,t+dur*0.25);
+  lp.frequency.linearRampToValueAtTime(f*2.0,t+dur);
+  const g=C.createGain();
+  g.gain.setValueAtTime(0,t);
+  g.gain.linearRampToValueAtTime(vol,t+0.055);
+  g.gain.setValueAtTime(vol,t+dur*0.7);
+  g.gain.exponentialRampToValueAtTime(.0006,t+dur);
+  o.connect(lp);lp.connect(g);audioOut(g);o.start(t);o.stop(t+dur+.05);
+}
+/* Weight landing: no pitch to speak of, just a body of low noise and a thump
+   whose pitch falls away. */
+function thud(vol,dur,f,delay){
+  if(!AUD.on||!AUD.ctx)return;
+  const C=AUD.ctx, t=C.currentTime+(delay||0);
+  const s=C.createBufferSource(); s.buffer=AUD.noise;
+  const lp=C.createBiquadFilter(); lp.type='lowpass';
+  lp.frequency.setValueAtTime(f*6,t); lp.frequency.exponentialRampToValueAtTime(f*1.4,t+dur);
+  const g=C.createGain(); g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(.0006,t+dur);
+  s.connect(lp);lp.connect(g);audioOut(g,0.6);s.start(t);s.stop(t+dur+.02);
+  const o=C.createOscillator(), og=C.createGain();
+  o.type='sine'; o.frequency.setValueAtTime(f,t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(26,f*0.45),t+dur*0.8);
+  og.gain.setValueAtTime(vol*0.9,t); og.gain.exponentialRampToValueAtTime(.0006,t+dur);
+  o.connect(og);audioOut(og,0.4);o.start(t);o.stop(t+dur+.02);
 }
 function sfx(name){
   if(!AUD.on||!AUD.ctx||G.demo)return;
   const t=now(); if(AUD.last[name]&&t-AUD.last[name]<55)return; AUD.last[name]=t;
   switch(name){
-    case 'tap': tone(660,.05,'square',.10); break;
-    case 'select': tone(520,.07,'triangle',.16); tone(780,.06,'triangle',.10,null,.045); break;
-    case 'order': tone(430,.06,'square',.10); tone(640,.05,'square',.07,null,.04); break;
-    case 'deny': tone(180,.16,'sawtooth',.15,120); break;
-    case 'bow': noiseHit(.16,2400,700,.16,.9); break;
-    case 'hit': noiseHit(.09,1500,320,.24,1.6); tone(150,.09,'square',.10,90); break;
-    case 'ram': tone(78,.28,'sine',.34,44); noiseHit(.18,300,90,.2,1); break;
-    case 'catapult': noiseHit(.22,700,180,.2,.8); tone(120,.2,'sine',.14,60); break;
-    case 'boom': noiseHit(.42,900,90,.34,.6); tone(70,.4,'sine',.28,38); cam.shake=Math.min(9,cam.shake+5); break;
-    case 'die': tone(300,.26,'sawtooth',.13,110); break;
-    case 'crumble': noiseHit(.6,600,70,.3,.5); cam.shake=Math.min(7,cam.shake+3); break;
-    case 'build': tone(880,.05,'square',.10); tone(1180,.05,'square',.08,null,.09); break;
-    case 'spawn': tone(620,.09,'triangle',.14); tone(930,.11,'triangle',.10,null,.07); break;
-    case 'tech': tone(700,.14,'sine',.16); tone(1050,.2,'sine',.13,null,.1); break;
-    case 'age': [523,659,784,1046].forEach((f,i)=>tone(f,.5,'triangle',.2,null,i*.16)); break;
-    case 'alarm': tone(196,.5,'sawtooth',.16); tone(147,.6,'sawtooth',.14,null,.22); break;
-    case 'win': [523,659,784,1046,1318].forEach((f,i)=>tone(f,.6,'triangle',.2,null,i*.18)); break;
-    case 'lose': [392,330,262,196].forEach((f,i)=>tone(f,.7,'sawtooth',.18,null,i*.24)); break;
+    /* Interface: a fingertip on wood, not a console. */
+    case 'tap':    struck(1240,.11,.055,1.9,0,'triangle'); break;
+    case 'select': struck(760,.13,.16,1.55,0,'triangle'); break;
+    case 'order':  struck(560,.12,.13,1.5,0,'triangle'); struck(840,.06,.09,1.5,.045,'triangle'); break;
+    case 'deny':   struck(150,.16,.20,1.28,0,'square'); thud(.10,.16,90,.02); break;
+    /* Work and war: string, blade, timber, stone. */
+    case 'bow':    pluck(2100,.5,.14); noiseHit(.10,3600,1500,.16,1.1,.01,.5); break;
+    case 'hit':    struck(430,.16,.10,2.35,0,'square'); noiseHit(.055,3000,900,.13,2.2); break;
+    case 'ram':    thud(.34,.34,64); struck(180,.13,.24,1.35,.01,'triangle'); break;
+    case 'catapult': struck(300,.16,.30,1.42,0,'triangle'); noiseHit(.20,900,240,.13,.9,.02); break;
+    case 'boom':   thud(.40,.55,52); noiseHit(.45,1400,110,.26,.5,.01,1);
+                   cam.shake=Math.min(9,cam.shake+5); break;
+    case 'die':    struck(240,.18,.11,1.22,0,'sawtooth'); thud(.14,.20,110,.03); break;
+    case 'crumble': noiseHit(.75,900,80,.26,.45,0,1); thud(.24,.6,58,.04);
+                    for(let i=0;i<5;i++) struck(180+hash2(i,3)*260,.07,.09,1.7,.06+i*.075,'square');
+                    cam.shake=Math.min(7,cam.shake+3); break;
+    /* A hammer on a peg, twice, the way a frame goes up. */
+    case 'build':  struck(900,.17,.075,1.85,0,'triangle'); struck(760,.12,.065,1.85,.085,'triangle'); break;
+    case 'spawn':  struck(620,.13,.20,1.5,0,'triangle'); struck(930,.09,.16,1.5,.075,'triangle'); break;
+    case 'tech':   bell(700,.10,.9); bell(1050,.07,.7,.09); break;
+    /* The age bell: five strokes of one bell, over a horn holding under it. */
+    case 'age':    [0,.34,.68,1.02,1.36].forEach((d,i)=>bell(392*(i===4?2:1),.15,2.6,d));
+                   horn(196,.09,1.9,.12); break;
+    /* The alarm is the tocsin -- the same bell rung fast, which is what a town
+       actually did, and it needs no explaining when you hear it. */
+    case 'alarm':  [0,.19,.38,.57].forEach(d=>bell(523,.13,.85,d)); break;
+    case 'win':    [0,.30,.60,.90].forEach((d,i)=>bell([392,523,659,784][i],.15,2.4,d));
+                   horn(261.6,.10,2.4,.05); horn(392,.07,2.2,.34); break;
+    case 'lose':   [392,330,294,196].forEach((f,i)=>horn(f,.12,i===3?2.2:.62,i*.5));
+                   bell(196,.10,2.6,1.5); break;
   }
 }
 
