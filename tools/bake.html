@@ -222,26 +222,47 @@ function makeBeast(kind){
   g.userData.legs=legs;
   return g;
 }
+/* A horse the size of a thumbnail has about forty pixels to say "horse" in, so
+   what matters is the silhouette from the front as much as from the side: a
+   deep chest that is wider than the barrel, a neck that leans out ahead of it,
+   and legs set apart rather than in one line. The old one was a stack of boxes
+   of near-identical width, which from the front is a slab. The coats were dark
+   enough to read as a hole in the ground at that size too, so the tones here
+   are the horse's own and the caller's colour only tints them. */
 function makeHorse(col,dark){
-  const M=new THREE.MeshStandardMaterial({color:col});
-  const D=new THREE.MeshStandardMaterial({color:dark||0x000000});
+  const c=new THREE.Color(col);
+  /* lift it out of the shadows: a coat below about a third brightness has no
+     form left once it is forty pixels tall */
+  const hsl={}; c.getHSL(hsl);
+  c.setHSL(hsl.h, hsl.s*0.9, Math.max(0.42, hsl.l*1.55));
+  const lit=c.clone(); lit.offsetHSL(0,0,0.10);
+  const M=new THREE.MeshStandardMaterial({color:c});
+  const ML=new THREE.MeshStandardMaterial({color:lit});
+  const dc=new THREE.Color(dark||0x33291d);
+  const dh={}; dc.getHSL(dh); dc.setHSL(dh.h,dh.s,Math.max(0.20,dh.l*1.4));
+  const D=new THREE.MeshStandardMaterial({color:dc});
   const g=new THREE.Group(), legs=[];
-  const body=box(.52,.42,1.05,M); body.position.y=.98; g.add(body);
-  const chest=box(.50,.44,.34,M); chest.position.set(0,1.02,.42); g.add(chest);
-  const rump=box(.48,.44,.30,M); rump.position.set(0,1.00,-.44); g.add(rump);
-  const neck=box(.28,.52,.30,M); neck.position.set(0,1.32,.52); neck.rotation.x=-.42; g.add(neck);
-  const head=box(.24,.24,.46,M); head.position.set(0,1.56,.80); head.rotation.x=.30; g.add(head);
-  const muzzle=box(.20,.17,.18,D); muzzle.position.set(0,1.50,1.00); g.add(muzzle);
+  const barrel=box(.46,.46,.92,M);  barrel.position.y=1.00; g.add(barrel);
+  const chest=box(.56,.50,.36,M);   chest.position.set(0,1.02,.44); g.add(chest);
+  const shoulder=box(.52,.30,.26,ML); shoulder.position.set(0,1.20,.36); g.add(shoulder);
+  const rump=box(.52,.48,.34,M);    rump.position.set(0,1.02,-.44); g.add(rump);
+  const belly=box(.40,.16,.80,D);   belly.position.set(0,.80,-.02); g.add(belly);
+  const neck=box(.26,.62,.30,M);    neck.position.set(0,1.40,.56); neck.rotation.x=-.50; g.add(neck);
+  const head=box(.22,.24,.44,M);    head.position.set(0,1.70,.86); head.rotation.x=.34; g.add(head);
+  const muzzle=box(.18,.16,.16,D);  muzzle.position.set(0,1.63,1.06); g.add(muzzle);
+  const blaze=box(.07,.03,.30,ML);  blaze.position.set(0,1.80,.90); blaze.rotation.x=.34; g.add(blaze);
   for(const sx of [-1,1]){
-    const ear=box(.07,.14,.06,M); ear.position.set(sx*.09,1.70,.68); g.add(ear);
+    const ear=box(.06,.15,.05,M); ear.position.set(sx*.08,1.85,.72); g.add(ear);
   }
-  const mane=box(.10,.20,.62,D); mane.position.set(0,1.46,.46); mane.rotation.x=-.42; g.add(mane);
-  const tail=box(.10,.42,.10,D); tail.position.set(0,1.02,-.62); tail.rotation.x=.5; g.add(tail);
+  const mane=box(.09,.24,.70,D);    mane.position.set(0,1.56,.50); mane.rotation.x=-.50; g.add(mane);
+  const tail=box(.11,.46,.11,D);    tail.position.set(0,1.06,-.64); tail.rotation.x=.55; g.add(tail);
+  /* set wide, and the front pair further forward than the back, so four legs
+     read as four from every angle instead of two */
   for(const [sx,sz] of [[-1,1],[1,1],[-1,-1],[1,-1]]){
-    const hip=new THREE.Group(); hip.position.set(sx*.20,.86,sz*.36); g.add(hip);
-    const up=box(.16,.44,.18,M); up.position.y=-.22; hip.add(up);
-    const lo=box(.13,.44,.15,M); lo.position.y=-.62; hip.add(lo);
-    const hoof=box(.15,.10,.17,D); hoof.position.y=-.86; hip.add(hoof);
+    const hip=new THREE.Group(); hip.position.set(sx*.24,.88,sz*(sz>0?.40:.38)); g.add(hip);
+    const up=box(.19,.44,.22,M);  up.position.y=-.22; hip.add(up);
+    const lo=box(.14,.44,.16,M);  lo.position.y=-.62; hip.add(lo);
+    const hoof=box(.17,.11,.19,D);hoof.position.y=-.87; hip.add(hoof);
     legs.push({hip,phase:(sz>0?0:Math.PI)+(sx>0?Math.PI:0)});
   }
   g.userData.legs=legs;
@@ -337,15 +358,21 @@ window.__bake=async function(cfg){
     hb.add(h);
   }
 
-  let horse=null, rider=root;
+  let horse=null, rider=root, mountLegs=false;
   if(cfg.mount){
     horse=makeHorse(cfg.mount.col, cfg.mount.dark);
     const HS=BH*0.74; horse.scale.setScalar(HS);
     scene.add(horse);
     /* seat the rider: hips at the saddle, legs already bent by the sitting clip */
-    root.position.set(0, HS*1.16, -HS*0.05);
+    root.position.set(0, HS*1.13, -HS*0.02);
     root.scale.setScalar(0.86);
     const cap=box(.46,.07,.66,MATS.team); cap.position.y=1.21; horse.add(cap);
+    /* The sitting clip is a chair pose: thighs straight out in front, shins
+       hanging. On a horse that reads as a man perched on a stool -- from the
+       front you see a slab of thigh and no horse at all. Open the hips out to
+       the sides and drop the knees so the legs go round the barrel, which is
+       what tells you at a glance that this is cavalry. */
+    mountLegs=true;
   }
   const mixer=new THREE.AnimationMixer(root);
   const box3=box0;                    /* body only: weapons must not change the framing */
@@ -410,6 +437,20 @@ window.__bake=async function(cfg){
            shrink the head. Has to happen after the mixer writes the pose, or the
            clip's own tracks overwrite it. */
         if(cfg.headScale&&B('head')) B('head').scale.setScalar(cfg.headScale);
+        /* Same reason as the head: after the mixer, or the clip overwrites it.
+           The chair pose is kept for the knee bend and the seat; only the hip
+           is turned, out to the side and down, so the thigh lies along the
+           horse's flank instead of sticking out in front of its chest. */
+        if(mountLegs){
+          for(const [n,sgn] of [['upperleg.l',1],['upperleg.r',-1]]){
+            const b=B(n); if(!b)continue;
+            b.rotation.x += 0.62;         /* drop the knee from horizontal */
+            b.rotation.z += sgn*0.30;     /* open the hip round the barrel */
+          }
+          for(const n of ['lowerleg.l','lowerleg.r']){
+            const b=B(n); if(b) b.rotation.x -= 0.30;   /* shin tucks back */
+          }
+        }
         root.updateMatrixWorld(true);
         renderer.render(scene,cam);
         sx.drawImage(renderer.domElement,(col+f)*FW,d*FH);

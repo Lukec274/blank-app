@@ -154,21 +154,21 @@ const UNITS={
     show:['2H_Staff','Mage_Cape'],
     states:[S.idle,S.walk,{name:'attack',clip:'Ranged_Magic_Shoot',n:5},S.die]},
   scout:{headScale:0.68, mesh:'kit_rogue.glb', keepMaterials:true, teamMesh:'Rogue_Cape',
-    show:['Knife','Rogue_Cape'], mount:{col:0x8a6740,dark:0x4a3520},
+    show:['Knife','Rogue_Cape'], mount:{col:0xa87c4c,dark:0x5a4228},
     states:[{name:'idle',clip:'Sit_Chair_Idle',n:2},{name:'walk',clip:'Sit_Chair_Idle',n:6},
             {name:'attack',clip:'Melee_1H_Attack_Slice_Diagonal',n:5},S.die]},
   knight:{headScale:0.64, mesh:'kit_knight.glb', keepMaterials:true, teamMesh:'Knight_Cape',
     show:['1H_Sword','Round_Shield','Knight_Helmet','Knight_Cape'],
-    mount:{col:0x4a4a55,dark:0x26262e},
+    mount:{col:0x7a5636,dark:0x3f2c1c},
     states:[{name:'idle',clip:'Sit_Chair_Idle',n:2},{name:'walk',clip:'Sit_Chair_Idle',n:6},
             {name:'attack',clip:'Melee_1H_Attack_Slice_Diagonal',n:5},S.die]},
   windrider:{headScale:0.66, mesh:'kit_rogue_hooded.glb', keepMaterials:true, teamMesh:'Rogue_Cape',
-    show:['2H_Crossbow','Rogue_Cape'], mount:{col:0x9a7448,dark:0x54402a},
+    show:['2H_Crossbow','Rogue_Cape'], mount:{col:0xb08a58,dark:0x604830},
     states:[{name:'idle',clip:'Sit_Chair_Idle',n:2},{name:'walk',clip:'Sit_Chair_Idle',n:6},
             {name:'attack',clip:'Ranged_Bow_Draw',n:5},S.die]},
   cataphract:{headScale:0.64, mesh:'kit_knight.glb', keepMaterials:true, teamMesh:'Knight_Cape',
     show:['Spike_Shield','Knight_Helmet','Knight_Cape'], weapon:'spear',
-    mount:{col:0x3e3a46,dark:0x1f1d24},
+    mount:{col:0x9a9aa4,dark:0x4c4c56},
     states:[{name:'idle',clip:'Sit_Chair_Idle',n:2},{name:'walk',clip:'Sit_Chair_Idle',n:6},
             {name:'attack',clip:'Melee_2H_Attack_Stab',n:5},S.die]},
 };
@@ -278,12 +278,13 @@ const srv=http.createServer((q,s)=>{
     await br.close(); srv.close(); return;
   }
 
-  const only=process.argv[2];
+  /* `bake.js a b c` bakes just those units; without arguments it bakes them all */
+  const only=process.argv.slice(2).filter(a=>!a.startsWith('--'));
   /* a single-unit bake must not drop the other units out of the manifest */
   const MF=path.join(OUT,'units.json');
   const manifest=fs.existsSync(MF)?JSON.parse(fs.readFileSync(MF,'utf8')):{};
   for(const [name,cfg] of Object.entries(UNITS)){
-    if(only&&name!==only)continue;
+    if(only.length&&!only.includes(name))continue;
     const r=await page.evaluate((c)=>window.__bake(c),{...cfg,animFiles:A});
     const b64=r.png.split(',')[1];
     fs.writeFileSync(path.join(OUT,name+'.png'),Buffer.from(b64,'base64'));

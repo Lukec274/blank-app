@@ -66,8 +66,15 @@ proxy's CONNECT check. Whatever the source, the file arrives by downloading it
 in a browser and uploading it here, then lands in `tools/glb/`.
 
 The Meshy MCP server in `.mcp.json` therefore only works from Claude Code on
-your own machine, with `MESHY_API_KEY` exported. The key must never be
-committed; `.env` is gitignored and `.env.example` shows the shape. Meshy is
+your own machine. The key must never be committed; `.env` is gitignored and
+`.env.example` shows the shape. The server loads `.env` itself (it uses dotenv),
+so putting the key there is enough — `.mcp.json` keeps `${MESHY_API_KEY}` and
+never holds the value.
+
+It will not start in a cloud session whatever you do with the key: the server
+validates against `api.meshy.ai` on boot, and the remote environment's egress
+policy answers 403 to CONNECT for that host, so the check fails and the failure
+is reported as "Invalid MESHY_API_KEY" whether the key is good or not. Meshy is
 also installed as a claude.ai connector, which routes through the MCP proxy
 rather than out of the container — but it has to be enabled for the chat, not
 just installed on the account.
