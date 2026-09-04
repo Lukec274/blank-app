@@ -3436,6 +3436,13 @@ function aiMilPlan(p,step){
   const br=p.brain, A=AI_CFG.attack, army=aiArmy(p);
   const threat=aiThreat(p);
   br.defendT=threat? 12 : Math.max(0,br.defendT-step);
+  /* The bell is the answer to being raided with no army, so the machine should
+     reach for it too -- and having to break a wall of sheltered villagers is
+     what makes a raid on an undefended town a real decision rather than a free
+     kill. It rings down again once the threat has gone. */
+  const outnumbered = aiPower(army) < 3;
+  if(threat && outnumbered && !p.bell) ringBell(p);
+  else if(p.bell && !threat && br.defendT<=0) ringBell(p);
 
   /* a raid on the town outranks anything short of an attack already in contact */
   if(threat && (!br.mil || br.mil.type!=='DEFEND') &&
@@ -5329,9 +5336,16 @@ function newGame(opts){
   scatterWorld(nf.forest);
   const startRes={f:opts.res,w:opts.res,g:Math.round(opts.res*.5),s:Math.round(opts.res*.5)};
   const nP=opts.players||2;
-  const pool=CIV_KEYS.filter(k=>k!==(opts.civ||'free'));
+  /* Deal realms from one deck so no two players start the same, and reshuffle
+     when there are more players than realms rather than handing out duplicates
+     from a shrinking pool. */
+  const want=opts.civ||'free';
+  let deck=CIV_KEYS.slice();
+  const deal=()=>{ if(!deck.length)deck=CIV_KEYS.slice(); return deck.splice((rnd()*deck.length)|0,1)[0]; };
+  const mine = want==='random' ? deal() : want;
+  const di=deck.indexOf(mine); if(di>=0)deck.splice(di,1);
   for(let i=0;i<nP;i++){
-    const civ = i===0 ? (opts.civ||'free') : (pool.length? pool.splice((rnd()*pool.length)|0,1)[0] : pick(CIV_KEYS));
+    const civ = i===0 ? mine : deal();
     const p=newPlayer(i, i===0? 'You — '+CIVS[civ].n : CIVS[civ].n, i>0, i, civ);
     p.popMax=opts.pop;
     CIVS[civ].mod(p);
@@ -5448,7 +5462,7 @@ function loadGame(){
    MENUS
    ============================================================ */
 const menuEl=$('menu');
-let SETUP={size:104,diff:'moderate',pop:120,res:200,players:2,civ:'free'};
+let SETUP={size:104,diff:'moderate',pop:120,res:200,players:2,civ:'random'};
 function closeMenu(){ menuEl.classList.add('off'); if(G.started&&!G.demo)G.paused=false; }
 function openMenu(){ if(G.started&&!G.demo){G.paused=true; showPause();} }
 function seg(label,opts,cur,cb){
@@ -5484,7 +5498,7 @@ function showSetup(){
     <div class="opts">
       <div class="opt"><span class="lbl">Your realm</span>
         <div class="seg civseg" data-seg="Realm">
-          ${CIV_KEYS.map(k=>`<button data-v="${k}" class="${k===SETUP.civ?'on':''}">${CIVS[k].n}</button>`).join('')}
+          ${['random',...CIV_KEYS].map(k=>`<button data-v="${k}" class="${k===SETUP.civ?'on':''}">${k==='random'?'Surprise me':CIVS[k].n}</button>`).join('')}
         </div>
         <div id="civBlurb"></div>
       </div>
@@ -5499,6 +5513,12 @@ function showSetup(){
       <div class="btn ghost" id="sBack">Back</div>
     </div></div>`;
   const showCiv=()=>{
+    if(SETUP.civ==='random'){
+      $('civBlurb').innerHTML=`<p style="margin:8px 0 0;font-size:12.5px">`+
+        `A realm drawn at the gates. You find out which one you are when the banner goes up.</p>`+
+        `<ul class="perks">${CIV_KEYS.map(k=>`<li>${CIVS[k].n} — ${CIVS[k].style}</li>`).join('')}</ul>`;
+      return;
+    }
     const c=CIVS[SETUP.civ];
     $('civBlurb').innerHTML=`<p style="margin:8px 0 0;font-size:12.5px">${c.blurb}</p>`+
       `<ul class="perks">${c.perks.map(x=>`<li>${x}</li>`).join('')}</ul>`+
@@ -5553,6 +5573,8 @@ function showPause(){
   menuEl.innerHTML=`<div class="sheet">
     <h1 style="font-size:26px">${AGES[p.age]}</h1>
     <p style="margin-top:-2px">${CIVS[p.civ].n} — ${CIVS[p.civ].style}</p>
+    <p style="margin-top:2px;font-size:12px;opacity:.75">Against ${
+      G.players.filter(o=>o.id!==p.id).map(o=>CIVS[o.civ].n+(o.alive===false?' (fallen)':'')).join(' · ')}</p>
     <div class="stats">
       <div><span>Elapsed</span><b>${fmtTime(G.time)}</b></div>
       <div><span>Population</span><b>${p.pop}/${p.popCap}</b></div>
