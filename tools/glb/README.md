@@ -1,5 +1,10 @@
 # Generated models
 
+Setup, once per machine: `npm install playwright-core` from `tools/` (or
+anywhere above it) so `bake.js` can find it, and a Chromium binary --
+`PW_CHROME=/path/to/chrome node tools/bake.js ...`, or leave it unset and
+Playwright downloads its own.
+
 Drop `.glb` files here. `tools/bake.js` copies everything in this folder into
 `/tmp/bake/glb/` before it launches the renderer, so a model landing here is one
 command away from being baked:

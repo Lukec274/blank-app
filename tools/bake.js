@@ -1,4 +1,9 @@
-const {chromium}=require('/tmp/claude-0/-home-user-blank-app/915f20c9-7396-5b0a-aff5-eca381d3f04d/scratchpad/node_modules/playwright-core');
+/* Needs playwright-core in a node_modules this file can resolve --
+   `npm install playwright-core` from tools/, or anywhere above it. It was
+   pinned to one machine's scratchpad path before; that only ever worked on
+   the session that wrote it. Set PW_CHROME to a real Chromium binary if you
+   don't want Playwright to download its own. */
+const {chromium}=require('playwright-core');
 const http=require('http'),fs=require('fs'),path=require('path');
 const OUT='/home/user/blank-app/game/assets';
 fs.mkdirSync(OUT,{recursive:true});
