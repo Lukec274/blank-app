@@ -2693,6 +2693,44 @@ function canGarrison(u,b){
   return b&&b.alive&&b.built>=1&&b.owner===u.owner&&u.kind!=='ram'&&u.kind!=='mangonel'
       && garrisonCap(b)>0 && (b.garr?b.garr.length:0)<garrisonCap(b);
 }
+/* Put a unit back on whatever the bell interrupted. Three callers need this --
+   coming out of a building, being turned out by the all-clear before ever
+   getting in, and finding the shelter full on arrival -- and when it lived in
+   only two of them the third quietly dropped the job and left the villager
+   standing in the street. Resources carry no `alive` flag: they are gone from
+   G.ents when they run out, so the test is the one the rest of the code uses
+   for them, not a plain truth check. */
+function restoreBellJob(u){
+  const t=u.bellJob; u.bellJob=null;
+  let tg=t&&t.target!=null?G.ents.get(t.target):null;
+  let ok=t&&(t.target==null||(tg&&tg.alive!==false&&(tg.type!=='r'||tg.amt>0)));
+  /* A raid lasts long enough that the berry bush they were on is often empty by
+     the time they come back out. Standing in the street is the wrong answer to
+     that -- find them another node of the same kind, the way they would have
+     moved on to one anyway had the bell never rung. */
+  if(!ok&&t&&t.task&&t.task.kind==='gather'&&t.kind){
+    const r=findResFree(G.players[u.owner],u.x,u.y,t.kind,30,RES_CAP[t.kind]||3)||findRes(u.x,u.y,t.kind,30);
+    if(r){ tg=r; ok=true; }
+  }
+  u.task=ok?t.task:null; u.target=ok?tg:null;
+  u.state=ok&&t.task&&t.task.kind==='gather'?'gather':'idle';
+}
+/* Nearest building with room, counting the people already walking towards it.
+   Capacity is only checked when a unit arrives, so without the inbound tally
+   the bell would send the whole town to the one nearest tower and leave
+   everyone who did not fit stranded at its door. */
+function shelterFor(u,holds,inbound){
+  let best=null,bd=1e9;
+  for(const b of holds){
+    const taken=(b.garr?b.garr.length:0)+((inbound&&inbound.get(b.id))||0);
+    if(taken>=garrisonCap(b))continue;
+    const d=dist2(u.x,u.y,b.x,b.y); if(d<bd){bd=d;best=b;}
+  }
+  return best;
+}
+function shelters(p){
+  return G.blds.filter(b=>b.owner===p&&b.alive&&b.built>=1&&garrisonCap(b)>0);
+}
 function enterGarrison(u,b){
   if(!canGarrison(u,b))return false;
   (b.garr=b.garr||[]).push(u.id);
@@ -2707,14 +2745,7 @@ function leaveGarrison(b,u){
   u.inside=null;
   const sp=spawnSpot(b);
   u.x=sp.x; u.y=sp.y; u.state='idle';
-  /* the bell sent them in from a job; put them back on it. Resources carry no
-     `alive` flag -- they are gone from G.ents when they run out -- so the test
-     is the one the rest of the code uses for them, not a plain truth check. */
-  if(u.bellJob){
-    const t=u.bellJob; u.bellJob=null;
-    const tg=t.target!=null?G.ents.get(t.target):null;
-    if(tg&&tg.alive!==false&&(tg.type!=='r'||tg.amt>0)){ u.task=t.task; u.target=tg; u.state=t.task&&t.task.kind==='gather'?'gather':'idle'; }
-  }
+  if(u.bellJob)restoreBellJob(u);          /* the bell sent them in from a job */
 }
 function ungarrisonAll(b){
   if(!b.garr||!b.garr.length)return 0;
@@ -2740,17 +2771,15 @@ function ringBell(p){
   p.bell=!p.bell;
   if(p.bell){
     let n=0;
-    const holds=G.blds.filter(b=>b.owner===p.id&&b.alive&&b.built>=1&&garrisonCap(b)>0);
+    const holds=shelters(p.id);
     if(!holds.length){ p.bell=false; if(p===G.human)toast('Nowhere to shelter — build a tower'); return 0; }
+    const inbound=new Map();
     for(const u of G.units){
       if(u.owner!==p.id||!u.alive||u.inside||u.kind!=='villager')continue;
-      let best=null,bd=1e9;
-      for(const b of holds){
-        if((b.garr?b.garr.length:0)>=garrisonCap(b))continue;
-        const d=dist2(u.x,u.y,b.x,b.y); if(d<bd){bd=d;best=b;}
-      }
+      const best=shelterFor(u,holds,inbound);
       if(!best)continue;
-      u.bellJob={task:u.task,target:u.target?u.target.id:null};
+      inbound.set(best.id,(inbound.get(best.id)||0)+1);
+      u.bellJob={task:u.task,target:u.target?u.target.id:null,kind:u.target?u.target.kind:null};
       u.task={kind:'garrison',id:best.id}; u.target=best; u.state='move'; u.path=null; u.flow=null;
       n++;
     }
@@ -2771,13 +2800,7 @@ function ringBell(p){
   }
   for(const u of G.units){
     if(u.owner!==p.id||!u.alive)continue;
-    if(u.task&&u.task.kind==='garrison'&&u.bellJob){    /* still on the way in */
-      const t=u.bellJob; u.bellJob=null;
-      const tg=t.target!=null?G.ents.get(t.target):null;
-      const ok=tg&&tg.alive!==false&&(tg.type!=='r'||tg.amt>0);
-      u.task=ok?t.task:null; u.target=ok?tg:null;
-      u.state=ok&&t.task&&t.task.kind==='gather'?'gather':'idle';
-    }
+    if(u.task&&u.task.kind==='garrison'&&u.bellJob) restoreBellJob(u);  /* still on the way in */
   }
   if(p===G.human){ sfx('select'); toast('Back to work'); }
   return n;
@@ -3078,11 +3101,23 @@ function updateUnit(u,dt){
       break;
     }
     case 'garrison': {
-      const b=u.target;
-      if(!b||!b.alive||!canGarrison(u,b)){ u.task=null;u.target=null;u.state='idle';u.bellJob=null;break; }
+      let b=u.target;
+      /* Full, burnt down, or otherwise no longer an option. Look for another
+         roof before writing the trip off -- a villager that walked to a tower
+         and found it full used to stand at the door for the rest of the game,
+         its old job thrown away with the task. */
+      if(!b||!canGarrison(u,b)){
+        /* Only the bell gets to change its mind about which roof. Clicking
+           garrison on a particular tower names that tower; silently walking the
+           unit to the town centre instead is not what was asked for. */
+        b=u.bellJob? shelterFor(u,shelters(u.owner),null) : null;
+        if(!b){ if(u.bellJob)restoreBellJob(u); else {u.task=null;u.target=null;u.state='idle';} break; }
+        u.task={kind:'garrison',id:b.id}; u.target=b; u.state='move'; u.path=null; u.flow=null;
+      }
       if(dist(u.x,u.y,b.x,b.y)<=b.size*.55+1.1){ enterGarrison(u,b); break; }
       u.repathT-=dt;
-      if(!u.path||u.repathT<=0){ u.repathT=1.0; if(!moveTo(u,b.x,b.y,b)){u.task=null;u.state='idle';u.bellJob=null;} }
+      if(!u.path||u.repathT<=0){ u.repathT=1.0;
+        if(!moveTo(u,b.x,b.y,b)){ if(u.bellJob)restoreBellJob(u); else {u.task=null;u.target=null;u.state='idle';} } }
       break;
     }
     case 'amove': {
