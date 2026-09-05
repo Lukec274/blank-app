@@ -1,0 +1,716 @@
+<canvas id="c"></canvas>
+<script type="importmap">{"imports":{"three":"./three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from './GLTFLoader.js';
+
+const FW=72, FH=82;                        // frame box — sized so a unit is ~46px, matching game zoom 1
+const loader=new GLTFLoader();
+const load=(u)=>new Promise((res,rej)=>loader.load(u,res,undefined,rej));
+
+const renderer=new THREE.WebGLRenderer({canvas:document.getElementById('c'),alpha:true,antialias:true});
+renderer.setSize(FW,FH,false);
+renderer.setClearColor(0x000000,0);
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+
+const scene=new THREE.Scene();
+/* 2:1 dimetric — yaw 45°, pitch 30° — matches 64x32 tiles exactly */
+const cam=new THREE.OrthographicCamera(-1,1,1,-1,0.01,100);
+const YAW=Math.PI/4, PITCH=30*Math.PI/180;
+function placeCam(radius,centerY){
+  const d=12;
+  cam.position.set(Math.sin(YAW)*Math.cos(PITCH)*d, Math.sin(PITCH)*d, Math.cos(YAW)*Math.cos(PITCH)*d);
+  cam.lookAt(0,centerY,0);
+  const h=radius;
+  cam.left=-h*(FW/FH); cam.right=h*(FW/FH); cam.top=h; cam.bottom=-h;
+  cam.updateProjectionMatrix();
+}
+/* Lighting.
+   The reference art is rendered in a raytracer, so every sprite carries soft
+   shadows, occlusion in its crevices and bounce light off the ground. Flat
+   directional lights on flat-shaded low-poly is exactly the look that reads as
+   blocky and toy-like -- each facet comes out one uniform colour with nothing
+   to describe the form. So: a shadow-casting key with a soft map, a hemisphere
+   light standing in for sky-and-ground bounce, and much less flat ambient. */
+const key=new THREE.DirectionalLight(0xfff2dc,2.35);
+key.position.set(-3.4,12,4.2);
+key.castShadow=true;
+key.shadow.mapSize.set(1024,1024);
+key.shadow.radius=3.5;
+key.shadow.bias=-0.0016;
+const sc=key.shadow.camera;
+sc.left=-3.2; sc.right=3.2; sc.top=3.2; sc.bottom=-3.2; sc.near=0.1; sc.far=26;
+scene.add(key);
+const fill=new THREE.DirectionalLight(0x9ab4d8,0.55); fill.position.set(5,2,-4); scene.add(fill);
+const rim=new THREE.DirectionalLight(0xffffff,0.55); rim.position.set(2,4,-6); scene.add(rim);
+/* sky above, warm ground bounce below -- this is what stops each facet reading
+   as a single flat colour */
+scene.add(new THREE.HemisphereLight(0xcfe0f2,0x6b5836,1.05));
+scene.add(new THREE.AmbientLight(0xb9c4d0,0.22));
+
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+
+/* an invisible floor so contact shadows land somewhere, without drawing it */
+const shadowFloor=new THREE.Mesh(new THREE.PlaneGeometry(40,40),
+  new THREE.ShadowMaterial({opacity:0.34}));
+shadowFloor.rotation.x=-Math.PI/2; shadowFloor.receiveShadow=true;
+scene.add(shadowFloor);
+function setShadowFloor(y){ shadowFloor.position.y=y-0.002; }
+
+const TEAM=0xff00ff;                        // keyed, recoloured per player at load
+const MATS={
+  team:  new THREE.MeshStandardMaterial({color:TEAM}),
+  skin:  new THREE.MeshStandardMaterial({color:0xd8a878}),
+  cloth: new THREE.MeshStandardMaterial({color:0x6b563c}),
+  leather:new THREE.MeshStandardMaterial({color:0x4e3a24}),
+  steel: new THREE.MeshStandardMaterial({color:0xb9bec8}),
+  dark:  new THREE.MeshStandardMaterial({color:0x3a2f24}),
+  wood:  new THREE.MeshStandardMaterial({color:0x7a5732}),
+  gold:  new THREE.MeshStandardMaterial({color:0xd8a13a}),
+  robe:  new THREE.MeshStandardMaterial({color:0xe8e0cc}),
+};
+function box(w,h,d,m){const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);
+  o.castShadow=true;o.receiveShadow=true;return o;}
+function cyl(r,h,m,seg){const o=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,seg||8),m);
+  o.castShadow=true;o.receiveShadow=true;return o;}
+
+/* weapons, built from primitives and parented to the hand bone */
+function makeWeapon(kind){
+  const g=new THREE.Group();
+  if(kind==='sword'){
+    const b=box(.022,.30,.05,MATS.steel); b.position.y=.16; g.add(b);
+    const cg=box(.09,.025,.035,MATS.gold); cg.position.y=.02; g.add(cg);
+    const h=cyl(.018,.08,MATS.leather); h.position.y=-.03; g.add(h);
+  } else if(kind==='axe'){
+    const s=cyl(.016,.30,MATS.wood); s.position.y=.10; g.add(s);
+    const hd=box(.10,.09,.03,MATS.steel); hd.position.set(.05,.23,0); g.add(hd);
+  } else if(kind==='spear'){
+    const s=cyl(.014,.62,MATS.wood); s.position.y=.16; g.add(s);
+    const t=new THREE.Mesh(new THREE.ConeGeometry(.032,.10,8),MATS.steel); t.position.y=.50; g.add(t);
+  } else if(kind==='pick'){
+    const s=cyl(.016,.28,MATS.wood); s.position.y=.09; g.add(s);
+    const hd=box(.16,.028,.028,MATS.steel); hd.position.y=.22; hd.rotation.z=.25; g.add(hd);
+  } else if(kind==='hammer'){
+    const s=cyl(.016,.24,MATS.wood); s.position.y=.07; g.add(s);
+    const hd=box(.07,.06,.06,MATS.steel); hd.position.y=.19; g.add(hd);
+  } else if(kind==='bow'){
+    const arc=new THREE.Mesh(new THREE.TorusGeometry(.17,.014,6,14,Math.PI*1.15),MATS.wood);
+    arc.rotation.z=Math.PI/2+Math.PI*0.075; arc.rotation.y=Math.PI/2; g.add(arc);
+    const str=cyl(.004,.33,MATS.robe,4); str.position.z=-.01; g.add(str);
+  } else if(kind==='pike'){
+    /* Long enough to break the body's outline. It is angled by wrot rather than
+       stood upright, because the frame is wider on the diagonal. */
+    const s=cyl(.013,1.05,MATS.wood); s.position.y=.34; g.add(s);
+    const t=new THREE.Mesh(new THREE.ConeGeometry(.030,.15,8),MATS.steel); t.position.y=.93; g.add(t);
+    for(const d of [-1,1]){                        /* langets: the steel straps below the head */
+      const l=box(.012,.13,.012,MATS.steel); l.position.set(d*.016,.80,0); g.add(l);
+    }
+    const butt=cyl(.017,.05,MATS.steel); butt.position.y=-.17; g.add(butt);
+  } else if(kind==='longbow'){
+    const arc=new THREE.Mesh(new THREE.TorusGeometry(.30,.013,6,16,Math.PI*1.05),MATS.wood);
+    arc.rotation.z=Math.PI/2+Math.PI*0.10; arc.rotation.y=Math.PI/2; g.add(arc);
+    const str=cyl(.004,.56,MATS.robe,4); str.position.z=-.015; g.add(str);
+    for(const d of [-1,1]){                        /* horn nocks read as two bright ticks */
+      const n=cyl(.011,.04,MATS.gold,6); n.position.set(0,d*.28,-.005); g.add(n);
+    }
+  } else if(kind==='staff'){
+    const s=cyl(.015,.52,MATS.wood); s.position.y=.15; g.add(s);
+    const o=new THREE.Mesh(new THREE.SphereGeometry(.035,8,6),MATS.gold); o.position.y=.42; g.add(o);
+  }
+  return g;
+}
+function makeShield(kind){
+  const g=new THREE.Group();
+  if(kind==='kite'){
+    /* Tall teardrop -- the shape that separates a line infantryman from a
+       round-shielded skirmisher at a glance. Built from a tapering stack so the
+       point reads even when it is six pixels wide. */
+    const seg=[[.24,.10],[.23,.02],[.19,-.06],[.13,-.13],[.06,-.19]];
+    for(const [w,y] of seg){
+      const b=box(.028,.09,w,MATS.team); b.position.set(0,y,0); g.add(b);
+      const r=box(.016,.095,w*1.06,MATS.dark); r.position.set(-.015,y,0); g.add(r);
+    }
+    const top=box(.028,.06,.24,MATS.team); top.position.y=.17; g.add(top);
+    const rim=box(.016,.065,.255,MATS.dark); rim.position.set(-.015,.17,0); g.add(rim);
+    const boss=new THREE.Mesh(new THREE.SphereGeometry(.026,8,6),MATS.gold);
+    boss.position.set(.022,.08,0); g.add(boss);
+    return g;
+  }
+  const big = kind==='pavise';
+  const w=big?.20:.17, h=big?.30:.21;
+  const b=box(.03,h,w,MATS.team); g.add(b);
+  const r=box(.018,h*1.1,w*1.1,MATS.dark); r.position.x=-.016; g.add(r);
+  const boss=new THREE.Mesh(new THREE.SphereGeometry(.028,8,6),MATS.gold); boss.position.x=.022; g.add(boss);
+  return g;
+}
+function makeHat(kind){
+  const g=new THREE.Group();
+  if(kind==='helm'){
+    const h=new THREE.Mesh(new THREE.SphereGeometry(.105,10,8,0,Math.PI*2,0,Math.PI*0.62),MATS.steel);
+    h.position.y=.02; g.add(h);
+    const b=cyl(.108,.03,MATS.steel,10); b.position.y=-.01; g.add(b);
+  } else if(kind==='helmPlume'){
+    const h=new THREE.Mesh(new THREE.SphereGeometry(.108,10,8,0,Math.PI*2,0,Math.PI*0.62),MATS.steel);
+    h.position.y=.02; g.add(h);
+    const p=box(.03,.10,.13,MATS.team); p.position.y=.10; g.add(p);
+  } else if(kind==='cap'){
+    const h=new THREE.Mesh(new THREE.SphereGeometry(.10,8,6,0,Math.PI*2,0,Math.PI*0.55),MATS.cloth);
+    h.position.y=.02; g.add(h);
+  } else if(kind==='hood'){
+    const h=new THREE.Mesh(new THREE.SphereGeometry(.115,8,7,0,Math.PI*2,0,Math.PI*0.7),MATS.robe);
+    h.position.y=.01; g.add(h);
+  }
+  return g;
+}
+/* Quadrupeds for the wildlife. Same construction as the horse -- one body,
+   four hip groups the bake loop swings by walk phase -- with the proportions
+   and fittings that separate a boar from a sheep at 46 px. */
+const BEASTS={
+  sheep: {col:0xe8e2d4, dark:0x4a4038, len:.78, wid:.46, high:.72, head:.30, snout:.16,
+          ears:'side', tail:'stub', legs:.34, woolly:true},
+  cattle:{col:0x8d6a4a, dark:0x3a2b20, len:1.02,wid:.56, high:.96, head:.34, snout:.24,
+          ears:'side', tail:'long', legs:.52, horns:true},
+  boar:  {col:0x554639, dark:0x241d18, len:.86, wid:.48, high:.70, head:.32, snout:.28,
+          ears:'back', tail:'stub', legs:.30, tusks:true, bristle:true},
+  wolf:  {col:0x6b6f74, dark:0x2c2f33, len:.94, wid:.36, high:.72, head:.28, snout:.26,
+          ears:'up',   tail:'brush',legs:.42},
+};
+function makeBeast(kind){
+  const B=BEASTS[kind];
+  const M=new THREE.MeshStandardMaterial({color:B.col});
+  const D=new THREE.MeshStandardMaterial({color:B.dark});
+  const g=new THREE.Group(), legs=[];
+  const y=B.high;
+  const body=box(B.wid,B.high*0.52,B.len,M); body.position.y=y; g.add(body);
+  if(B.woolly){                                  /* fleece breaks the boxy outline */
+    for(const [dx,dz] of [[-.14,.20],[.14,.20],[-.14,-.16],[.14,-.16],[0,.02]]){
+      const p2=box(B.wid*.52,B.high*.34,B.len*.30,M);
+      p2.position.set(dx*B.wid,y+B.high*.20,dz*B.len); g.add(p2);
+    }
+  }
+  if(B.bristle){                                 /* boar's ridge */
+    const r=box(.06,B.high*.20,B.len*.62,D); r.position.set(0,y+B.high*.30,-.02); g.add(r);
+  }
+  const nz=B.len*0.52;
+  const neck=box(B.wid*.56,B.high*.34,B.high*.30,M);
+  neck.position.set(0,y+B.high*.16,nz); neck.rotation.x=-.30; g.add(neck);
+  const hy=y+(kind==='wolf'?B.high*.16:B.high*.26);
+  const head=box(B.head,B.head*.86,B.head*1.15,M); head.position.set(0,hy,nz+B.head*.55); g.add(head);
+  const sn=box(B.head*.62,B.head*.52,B.snout,D);
+  sn.position.set(0,hy-B.head*.14,nz+B.head*.95+B.snout*.35); g.add(sn);
+  for(const sx of [-1,1]){
+    const e=box(.07,B.ears==='up'?.16:.08,B.ears==='up'?.07:.14,D);
+    const ez=B.ears==='back'? nz+B.head*.10 : nz+B.head*.40;
+    e.position.set(sx*B.head*.42, hy+B.head*(B.ears==='up'?.62:.36), ez); g.add(e);
+    if(B.horns){ const h=box(.05,.05,.22,D);
+      h.position.set(sx*B.head*.46,hy+B.head*.44,nz+B.head*.50); h.rotation.y=sx*.5; g.add(h); }
+    if(B.tusks){ const t=box(.04,.10,.05,0xdad2be&&new THREE.MeshStandardMaterial({color:0xdad2be}));
+      t.position.set(sx*B.head*.24,hy-B.head*.26,nz+B.head*1.0+B.snout*.5); t.rotation.x=-.5; g.add(t); }
+  }
+  const tz=-B.len*0.55;
+  if(B.tail==='long'){ const t=box(.07,B.high*.52,.07,D); t.position.set(0,y,tz); t.rotation.x=.35; g.add(t); }
+  else if(B.tail==='brush'){ const t=box(.13,.13,B.len*.42,D); t.position.set(0,y+.04,tz-B.len*.16); t.rotation.x=-.30; g.add(t); }
+  else { const t=box(.09,.11,.09,D); t.position.set(0,y+B.high*.16,tz); g.add(t); }
+  for(const [sx,sz] of [[-1,1],[1,1],[-1,-1],[1,-1]]){
+    const hip=new THREE.Group(); hip.position.set(sx*B.wid*.34,y-B.high*.22,sz*B.len*.32); g.add(hip);
+    const up=box(.12,B.legs*.55,.13,M); up.position.y=-B.legs*.28; hip.add(up);
+    const lo=box(.10,B.legs*.55,.11,M); lo.position.y=-B.legs*.72; hip.add(lo);
+    const hoof=box(.12,.08,.13,D); hoof.position.y=-B.legs; hip.add(hoof);
+    legs.push({hip,phase:(sz>0?0:Math.PI)+(sx>0?Math.PI:0)});
+  }
+  g.userData.legs=legs;
+  return g;
+}
+/* A horse the size of a thumbnail has about forty pixels to say "horse" in, so
+   what matters is the silhouette from the front as much as from the side: a
+   deep chest that is wider than the barrel, a neck that leans out ahead of it,
+   and legs set apart rather than in one line. The old one was a stack of boxes
+   of near-identical width, which from the front is a slab. The coats were dark
+   enough to read as a hole in the ground at that size too, so the tones here
+   are the horse's own and the caller's colour only tints them. */
+function makeHorse(col,dark){
+  const c=new THREE.Color(col);
+  /* lift it out of the shadows: a coat below about a third brightness has no
+     form left once it is forty pixels tall */
+  const hsl={}; c.getHSL(hsl);
+  c.setHSL(hsl.h, hsl.s*0.9, Math.max(0.42, hsl.l*1.55));
+  const lit=c.clone(); lit.offsetHSL(0,0,0.10);
+  const M=new THREE.MeshStandardMaterial({color:c});
+  const ML=new THREE.MeshStandardMaterial({color:lit});
+  const dc=new THREE.Color(dark||0x33291d);
+  const dh={}; dc.getHSL(dh); dc.setHSL(dh.h,dh.s,Math.max(0.20,dh.l*1.4));
+  const D=new THREE.MeshStandardMaterial({color:dc});
+  const g=new THREE.Group(), legs=[];
+  const barrel=box(.46,.46,.92,M);  barrel.position.y=1.00; g.add(barrel);
+  const chest=box(.56,.50,.36,M);   chest.position.set(0,1.02,.44); g.add(chest);
+  const shoulder=box(.52,.30,.26,ML); shoulder.position.set(0,1.20,.36); g.add(shoulder);
+  const rump=box(.52,.48,.34,M);    rump.position.set(0,1.02,-.44); g.add(rump);
+  const belly=box(.40,.16,.80,D);   belly.position.set(0,.80,-.02); g.add(belly);
+  const neck=box(.26,.62,.30,M);    neck.position.set(0,1.40,.56); neck.rotation.x=-.50; g.add(neck);
+  const head=box(.22,.24,.44,M);    head.position.set(0,1.70,.86); head.rotation.x=.34; g.add(head);
+  const muzzle=box(.18,.16,.16,D);  muzzle.position.set(0,1.63,1.06); g.add(muzzle);
+  const blaze=box(.07,.03,.30,ML);  blaze.position.set(0,1.80,.90); blaze.rotation.x=.34; g.add(blaze);
+  for(const sx of [-1,1]){
+    const ear=box(.06,.15,.05,M); ear.position.set(sx*.08,1.85,.72); g.add(ear);
+  }
+  const mane=box(.09,.24,.70,D);    mane.position.set(0,1.56,.50); mane.rotation.x=-.50; g.add(mane);
+  const tail=box(.11,.46,.11,D);    tail.position.set(0,1.06,-.64); tail.rotation.x=.55; g.add(tail);
+  /* set wide, and the front pair further forward than the back, so four legs
+     read as four from every angle instead of two */
+  for(const [sx,sz] of [[-1,1],[1,1],[-1,-1],[1,-1]]){
+    const hip=new THREE.Group(); hip.position.set(sx*.24,.88,sz*(sz>0?.40:.38)); g.add(hip);
+    const up=box(.19,.44,.22,M);  up.position.y=-.22; hip.add(up);
+    const lo=box(.14,.44,.16,M);  lo.position.y=-.62; hip.add(lo);
+    const hoof=box(.17,.11,.19,D);hoof.position.y=-.87; hip.add(hoof);
+    legs.push({hip,phase:(sz>0?0:Math.PI)+(sx>0?Math.PI:0)});
+  }
+  g.userData.legs=legs;
+  return g;
+}
+window.__bake=async function(cfg){
+  /* cfg.mesh lets a generated model (e.g. from Meshy) stand in for the stock
+     mannequin; if that file carries its own animations they are used as-is. */
+  const gltf=await load(cfg.mesh? ('./glb/'+cfg.mesh) : './glb/mesh.glb');
+  const root=gltf.scene;
+  const clips={};
+  for(const c of (gltf.animations||[])) clips[c.name]=c;
+  for(const f of (cfg.animFiles||[])){
+    const a=await load('./glb/anim_'+f+'.glb');
+    for(const c of a.animations) clips[c.name]=c;
+  }
+  if(cfg.clipMap){ for(const k in cfg.clipMap){ if(clips[cfg.clipMap[k]]) clips[k]=clips[cfg.clipMap[k]]; } }
+  window.__clips=Object.keys(clips);
+  scene.add(root);
+  root.updateMatrixWorld(true);
+  /* per-part materials so the tunic can carry the player colour */
+  const partMat={Body:'team',Head:'skin',ArmLeft:'skin',ArmRight:'skin',LegLeft:'cloth',LegRight:'cloth'};
+  if(cfg.keepMaterials){
+    /* Packs like KayKit's Adventurers carry every weapon, shield, hat and cape
+       as its own mesh, all visible at once. cfg.show names the ones this unit
+       carries; body parts always stay. */
+    const BODY=/(ArmLeft|ArmRight|Body|Head|Head_Hooded|LegLeft|LegRight)$/;
+    const keep=new Set(cfg.show||[]);
+    root.traverse(o=>{
+      if(!o.isMesh&&!o.isSkinnedMesh)return;
+      o.frustumCulled=false;
+      if(!BODY.test(o.name)) o.visible=keep.has(o.name);
+      /* keeping the pack's textures would cost the team colour, so key one
+         garment -- a cape or tabard reads as ownership across the map. */
+      if(cfg.teamMesh&&o.name===cfg.teamMesh) o.material=MATS.team;
+    });
+  } else
+  root.traverse(o=>{
+    if(!o.isMesh&&!o.isSkinnedMesh)return;
+    const n=(o.name.split('_').pop()||'');
+    const key=(cfg.parts&&cfg.parts[n])||partMat[n]||'cloth';
+    o.material=MATS[key]; o.frustumCulled=false; o.castShadow=true; o.receiveShadow=true;
+  });
+  /* Frame from the body alone. Box3.setFromObject ignores the visible flag, so a
+     pack model's hidden staff or spare shield would otherwise stretch the box and
+     shrink the unit inside its frame -- the mage measures 3.0 units on a 2.0 body
+     because of the staff it is not even holding. */
+  const BODYRE=/(ArmLeft|ArmRight|Body|Head|Head_Hooded|LegLeft|LegRight)$/;
+  const box0=new THREE.Box3();
+  let bodyFound=false;
+  root.traverse(o=>{
+    if((!o.isMesh&&!o.isSkinnedMesh)||!o.visible)return;
+    if(!BODYRE.test(o.name))return;
+    box0.expandByObject(o); bodyFound=true;
+  });
+  if(!bodyFound) box0.setFromObject(root);
+  const BH=box0.max.y-box0.min.y;              /* body height in world units */
+  const S=BH*0.95;                              /* everything attached scales with the body */
+  const bones={};
+  root.traverse(o=>{ if(o.isBone||/^(hand|head|chest|hips)/.test(o.name))bones[o.name]=o; });
+  window.__bones=Object.keys(bones);
+  const B=(n)=>bones[n]||bones[n.replace('.','_')]||bones[n.replace('.','')];
+  if(cfg.weapon&&B('hand.r')){
+    const w=makeWeapon(cfg.weapon);
+    w.scale.setScalar(S*1.15);
+    w.position.set(0,.02*S,0);
+    w.rotation.set(cfg.wrot?cfg.wrot[0]:0, cfg.wrot?cfg.wrot[1]:0, cfg.wrot?cfg.wrot[2]:0);
+    B('hand.r').add(w);
+  }
+  if(cfg.shield&&B('hand.l')){
+    const sh=makeShield(cfg.shield);
+    sh.scale.setScalar(S);
+    sh.rotation.set(0,0,0); sh.position.set(.05*S,.03*S,0);
+    B('hand.l').add(sh);
+  }
+  if(cfg.debugFacing&&B('chest')){
+    const g=new THREE.Group();
+    const c=new THREE.Mesh(new THREE.ConeGeometry(.10,.42,8),new THREE.MeshBasicMaterial({color:0xff2020}));
+    c.rotation.x=Math.PI/2; c.position.z=.34; g.add(c);          /* points along the model's local +Z */
+    const up=new THREE.Mesh(new THREE.ConeGeometry(.07,.30,8),new THREE.MeshBasicMaterial({color:0x20ff20}));
+    up.position.y=.40; g.add(up);
+    g.scale.setScalar(S); B('chest').add(g);
+  }
+  if(cfg.hat&&B('head')){
+    /* the head bone sits at the neck, not the crown -- offsetting by a fraction of
+       the whole body buried the hat inside the head mesh. Size and place it from
+       the head's own extent instead. */
+    const hb=B('head'); hb.updateWorldMatrix(true,false);
+    const crown=box0.max.y-new THREE.Vector3().setFromMatrixPosition(hb.matrixWorld).y;
+    const h=makeHat(cfg.hat);
+    h.scale.setScalar(crown*3.5);
+    h.position.y=crown*0.78;
+    hb.add(h);
+  }
+
+  let horse=null, rider=root, mountLegs=false;
+  if(cfg.mount){
+    horse=makeHorse(cfg.mount.col, cfg.mount.dark);
+    const HS=BH*0.74; horse.scale.setScalar(HS);
+    scene.add(horse);
+    /* seat the rider: hips at the saddle, legs already bent by the sitting clip */
+    root.position.set(0, HS*1.13, -HS*0.02);
+    root.scale.setScalar(0.86);
+    const cap=box(.46,.07,.66,MATS.team); cap.position.y=1.21; horse.add(cap);
+    /* The sitting clip is a chair pose: thighs straight out in front, shins
+       hanging. On a horse that reads as a man perched on a stool -- from the
+       front you see a slab of thigh and no horse at all. Open the hips out to
+       the sides and drop the knees so the legs go round the barrel, which is
+       what tells you at a glance that this is cavalry. */
+    mountLegs=true;
+  }
+  const mixer=new THREE.AnimationMixer(root);
+  const box3=box0;                    /* body only: weapons must not change the framing */
+  const height=box3.max.y-box3.min.y;
+  /* box0 comes from bind-pose geometry, so it cannot see the shrunken head --
+     the unit would just sit smaller in its frame. Take the height back off the
+     framing by the fraction of the body the head actually occupies. */
+  let fit=height;
+  if(cfg.headScale&&B('head')){
+    const hy=new THREE.Vector3().setFromMatrixPosition(B('head').matrixWorld).y;
+    const headFrac=(box3.max.y-hy)/height;
+    fit=height*(1-(1-cfg.headScale)*headFrac);
+  }
+  /* A rider is measured at the origin and only afterwards lifted onto the horse,
+     so framing on that box alone ignored everything the horse adds underneath
+     and clipped the rider's head off the top of every mounted frame. Measure
+     the pair together once they are actually assembled. */
+  let ground=box3.min.y;
+  if(cfg.mount&&horse){
+    const mb=new THREE.Box3().setFromObject(horse);
+    mb.union(new THREE.Box3().setFromObject(root));
+    ground=mb.min.y;
+    fit=mb.max.y-mb.min.y;
+  }
+  setShadowFloor(ground);
+  /* Reference views for image-to-3D.
+     Nothing to do with the game's own sprites: those are 72x82 at a 30 degree
+     pitch, which is a terrible thing to hand a photogrammetry model -- it reads
+     the foreshortening as the shape. These are big, near-level, orthographic,
+     on a flat ground with the contact shadow turned off, four square-on facings
+     in the order the generators expect. The point is that whatever comes back
+     is built on our proportions and our silhouette, not on the generator's idea
+     of what a spearman ought to look like. */
+  if(cfg.refViews){
+    const RW=cfg.refW||768, RH=cfg.refH||1024;
+    const wasVis=shadowFloor.visible; shadowFloor.visible=false;
+    /* The team material is keyed magenta so the game can recolour it per player.
+       Handing that to a 3D generator bakes fluorescent magenta into the mesh, so
+       swap it for a plain cloth colour just for these shots. */
+    const teamCol=MATS.team.color.getHex(); MATS.team.color.setHex(0x8a5a3c);
+    /* The bind pose is a T -- arms straight out, which no generator reads as a
+       person and which will not fit the frame anyway. Stand it in its idle. */
+    const idleSt=(cfg.states||[]).find(x=>x.name==='idle');
+    const idleClip=idleSt&&clips[idleSt.clip];
+    let action=null;
+    if(idleClip){ action=mixer.clipAction(idleClip); action.reset(); action.play(); mixer.setTime(0); }
+    const applyPose=()=>{
+      if(cfg.headScale&&B('head')) B('head').scale.setScalar(cfg.headScale);
+      if(mountLegs){
+        for(const [n,sgn] of [['upperleg.l',1],['upperleg.r',-1]]){
+          const b=B(n); if(!b)continue; b.rotation.x+=0.62; b.rotation.z+=sgn*0.30;
+        }
+        for(const n of ['lowerleg.l','lowerleg.r']){ const b=B(n); if(b) b.rotation.x-=0.30; }
+      }
+      root.updateMatrixWorld(true);
+    };
+    /* Frame on everything -- spear, shield, horse and all. The sprite framing
+       deliberately ignores the weapon so the unit keeps a constant size across
+       the roster; here a cropped spear is a spear the generator will not build. */
+    const full=new THREE.Box3();
+    /* Only what is actually drawn. Box3.expandByObject ignores the visible flag,
+       so a pack model's dozen hidden spare weapons would set the framing and
+       leave the unit a speck in the middle of a very well-composed empty room. */
+    const addVisible=(o)=>o.traverse(m=>{
+      if((m.isMesh||m.isSkinnedMesh)&&m.visible) full.expandByObject(m);
+    });
+    for(const deg of [45,135,225,315]){
+      root.rotation.y=deg*Math.PI/180; if(horse)horse.rotation.y=deg*Math.PI/180;
+      if(action){ mixer.setTime(0); mixer.setTime(0); }
+      applyPose();
+      addVisible(root); if(horse)addVisible(horse);
+    }
+    const ctr=full.getCenter(new THREE.Vector3()), sz=full.getSize(new THREE.Vector3());
+    const rcam=new THREE.OrthographicCamera(-1,1,1,-1,0.01,200);
+    const RP=6*Math.PI/180, d=60;                 /* near-level: no foreshortening to misread */
+    rcam.position.set(ctr.x+Math.sin(YAW)*Math.cos(RP)*d, ctr.y+Math.sin(RP)*d, ctr.z+Math.cos(YAW)*Math.cos(RP)*d);
+    rcam.lookAt(ctr.x,ctr.y,ctr.z);
+    const h=Math.max(sz.y, Math.max(sz.x,sz.z)*(RH/RW))*0.56;   /* a little air, not a lot */
+    rcam.left=-h*(RW/RH); rcam.right=h*(RW/RH); rcam.top=h; rcam.bottom=-h;
+    rcam.updateProjectionMatrix(); rcam.updateMatrixWorld(true);
+    renderer.setSize(RW,RH,false);
+    renderer.setClearColor(0xf2f2f2,1);
+    const out={};
+    for(const [name,deg] of [['front',45],['left',135],['back',225],['right',315]]){
+      const yaw=deg*Math.PI/180;
+      root.rotation.y=yaw; if(horse)horse.rotation.y=yaw;
+      if(action){ mixer.setTime(0); mixer.setTime(0); }
+      applyPose();
+      renderer.render(scene,rcam);
+      out[name]=renderer.domElement.toDataURL('image/png');
+    }
+    if(action)action.stop();
+    MATS.team.color.setHex(teamCol);
+    scene.remove(root); if(horse)scene.remove(horse);
+    shadowFloor.visible=wasVis;
+    renderer.setSize(FW,FH,false); renderer.setClearColor(0x000000,0);
+    return {refViews:out,w:RW,h:RH};
+  }
+  const cy=ground+fit*(cfg.mount?0.50:0.46);
+  placeCam(fit*(cfg.mount?0.60:0.80)*(cfg.zoom||1), cy);
+  cam.updateMatrixWorld(true);
+  /* where the feet land in the frame — the game anchors sprites here */
+  const o=new THREE.Vector3(0,ground,0).project(cam);
+  const anchor={x:(o.x*0.5+0.5)*FW, y:(-o.y*0.5+0.5)*FH};
+
+  /* lay every state out on one sheet: rows = facing, cols = frame */
+  const states=cfg.states;
+  const total=states.reduce((a,s)=>a+s.n,0);
+  const sheet=document.createElement('canvas');
+  sheet.width=FW*total; sheet.height=FH*5;
+  const sx=sheet.getContext('2d');
+  const YAWS=[45,90,135,180,225];   /* S, SE, E, NE, N — the other three are mirrors */
+  let col=0;
+  const layout=[];
+  for(const st of states){
+    const clip=clips[st.clip];
+    if(!clip){ layout.push({name:st.name,start:col,n:st.n,missing:true}); col+=st.n; continue; }
+    const action=mixer.clipAction(clip);
+    action.reset(); action.play();
+    layout.push({name:st.name,start:col,n:st.n,dur:+clip.duration.toFixed(2)});
+    for(let f=0;f<st.n;f++){
+      const t=(st.from||0)+((st.to!=null?st.to:1)-(st.from||0))*(st.n===1?0.5:f/st.n)*clip.duration;
+      const gait=(st.name==='walk')? (f/st.n)*Math.PI*2 : 0;
+      if(horse){
+        for(const L of horse.userData.legs) L.hip.rotation.x=Math.sin(gait+L.phase)*(st.name==='walk'?0.55:0.05);
+        horse.position.y=(st.name==='walk')?Math.abs(Math.sin(gait))*BH*0.02:0;
+      }
+      for(let d=0;d<5;d++){
+        const yaw=(YAWS[d]+(cfg.yawOffset||0))*Math.PI/180;
+        root.rotation.y=yaw;
+        if(horse)horse.rotation.y=yaw;
+        mixer.setTime(0); mixer.setTime(t);
+        /* The pack's characters are chibi -- head about a third of the body.
+           Soldiers read as soldiers when the kit dominates the silhouette, so
+           shrink the head. Has to happen after the mixer writes the pose, or the
+           clip's own tracks overwrite it. */
+        if(cfg.headScale&&B('head')) B('head').scale.setScalar(cfg.headScale);
+        /* Same reason as the head: after the mixer, or the clip overwrites it.
+           The chair pose is kept for the knee bend and the seat; only the hip
+           is turned, out to the side and down, so the thigh lies along the
+           horse's flank instead of sticking out in front of its chest. */
+        if(mountLegs){
+          for(const [n,sgn] of [['upperleg.l',1],['upperleg.r',-1]]){
+            const b=B(n); if(!b)continue;
+            b.rotation.x += 0.62;         /* drop the knee from horizontal */
+            b.rotation.z += sgn*0.30;     /* open the hip round the barrel */
+          }
+          for(const n of ['lowerleg.l','lowerleg.r']){
+            const b=B(n); if(b) b.rotation.x -= 0.30;   /* shin tucks back */
+          }
+        }
+        root.updateMatrixWorld(true);
+        renderer.render(scene,cam);
+        sx.drawImage(renderer.domElement,(col+f)*FW,d*FH);
+      }
+    }
+    action.stop();
+    col+=st.n;
+  }
+  scene.remove(root);
+  const hb=B('hand.r'); const hw=new THREE.Vector3(), hs=new THREE.Vector3();
+  if(hb){hb.getWorldPosition(hw);hb.getWorldScale(hs);}
+  window.__diag={bbox:[box3.min.x,box3.min.y,box3.min.z,box3.max.x,box3.max.y,box3.max.z].map(v=>+v.toFixed(3)),
+    rootPos:[root.position.x,root.position.y,root.position.z], rootScale:[root.scale.x,root.scale.y,root.scale.z],
+    handWorld:[+hw.x.toFixed(3),+hw.y.toFixed(3),+hw.z.toFixed(3)], handScale:[+hs.x.toFixed(4),+hs.y.toFixed(4),+hs.z.toFixed(4)],
+    camPos:[+cam.position.x.toFixed(2),+cam.position.y.toFixed(2),+cam.position.z.toFixed(2)], frust:[cam.left,cam.right,cam.top,cam.bottom]};
+  return {png:sheet.toDataURL('image/png'),layout,frames:total,fw:FW,fh:FH,anchor,diag:window.__diag,
+    bones:window.__bones.slice(0,30)};
+};
+
+/* Buildings. Rendered through the same 2:1 dimetric camera as the units, scaled
+   so the model's footprint lands exactly on an n-tile diamond, then cropped to
+   its own alpha so the game can anchor it at the footprint centre. */
+const TW=64, TH=32;
+function cv(w,h){const c=document.createElement('canvas');c.width=w;c.height=h;return [c,c.getContext('2d',{willReadFrequently:true})];}
+/* Wildlife. No skinned rig on these, so they get their own loop: legs swing off
+   the walk phase the way the mount already does, and the death frames tip the
+   body over. Same sheet layout as the units, so the game draws them through the
+   path it already has. */
+window.__bakeBeast=async function(cfg){
+  const g=makeBeast(cfg.kind);
+  g.traverse(o=>{ if(o.isMesh){o.castShadow=true;o.receiveShadow=true;} });
+  scene.add(g); g.updateMatrixWorld(true);
+  const bb=new THREE.Box3().setFromObject(g);
+  const H=bb.max.y-bb.min.y;
+  g.position.y=-bb.min.y; g.updateMatrixWorld(true); setShadowFloor(0);
+
+  placeCam(H*1.15*(cfg.zoom||1), H*0.52);
+  cam.updateMatrixWorld(true);
+  const o=new THREE.Vector3(0,0,0).project(cam);
+  const anchor={x:(o.x*0.5+0.5)*FW, y:(-o.y*0.5+0.5)*FH};
+
+  const states=[{name:'idle',n:2},{name:'walk',n:6},{name:'die',n:4}];
+  const total=states.reduce((a,s)=>a+s.n,0);
+  const sheet=document.createElement('canvas');
+  sheet.width=FW*total; sheet.height=FH*5;
+  const sx=sheet.getContext('2d');
+  const YAWS=[45,90,135,180,225];
+  let col=0; const layout=[];
+  for(const st of states){
+    layout.push({name:st.name,start:col,n:st.n});
+    for(let f=0;f<st.n;f++){
+      const ph=(f/st.n)*Math.PI*2;
+      let swing=0, bob=0, roll=0, sink=0;
+      if(st.name==='walk'){ swing=0.55; bob=Math.abs(Math.sin(ph))*H*0.025; }
+      else if(st.name==='idle'){ swing=0.05; bob=Math.sin(ph)*H*0.006; }
+      else { const k=f/(st.n-1); roll=k*Math.PI*0.46; sink=-k*H*0.16; }
+      for(const L of g.userData.legs)
+        L.hip.rotation.x = st.name==='die' ? -roll*0.5 : Math.sin(ph+L.phase)*swing;
+      for(let d=0;d<5;d++){
+        g.rotation.set(0,(YAWS[d]+(cfg.yawOffset||0))*Math.PI/180,roll);
+        g.position.y=-bb.min.y+bob+sink;
+        g.updateMatrixWorld(true);
+        renderer.render(scene,cam);
+        sx.drawImage(renderer.domElement,(col+f)*FW,d*FH);
+      }
+    }
+    col+=st.n;
+  }
+  scene.remove(g);
+  return {png:sheet.toDataURL('image/png'),fw:FW,fh:FH,frames:total,
+          anchor:{x:+anchor.x.toFixed(2),y:+anchor.y.toFixed(2)},states:layout};
+};
+
+window.__bakeProp=async function(cfg){
+  const gltf=await load('./glb/'+cfg.mesh);
+  const root=gltf.scene;
+  /* Turn the model on the spot before framing it. A wall piece has to be baked
+     once per axis it can run along, and the two are different silhouettes in a
+     fixed camera -- there is no mirroring that gets you the second one. */
+  if(cfg.yaw) root.rotation.y=cfg.yaw*Math.PI/180;
+  scene.add(root); root.updateMatrixWorld(true);
+  root.traverse(o=>{ if(o.isMesh){o.frustumCulled=false; o.castShadow=true; o.receiveShadow=true;
+    if(cfg.hide&&cfg.hide.some(h=>o.name.indexOf(h)>=0))o.visible=false; } });
+
+  /* a named sub-node that turns, baked as a strip of frames the game cycles */
+  let spinNode=null;
+  if(cfg.spin){ root.traverse(o=>{ if(o.name===cfg.spin.node)spinNode=o; }); }
+
+  let box=new THREE.Box3().setFromObject(root);
+  /* sit it on the origin: footprint centred, base at y=0 */
+  root.position.set(-(box.min.x+box.max.x)/2, -box.min.y, -(box.min.z+box.max.z)/2);
+  root.updateMatrixWorld(true);
+  box=new THREE.Box3().setFromObject(root);
+  setShadowFloor(box.min.y);
+  const foot=Math.max(box.max.x-box.min.x, box.max.z-box.min.z);
+
+  /* pixels per world unit, so a `tiles`-wide footprint spans tiles*TW across the
+     diamond (a world square reads sqrt(2) wider once turned 45 degrees) */
+  /* Buildings size to their plot, but decoration must share one world scale --
+     sizing each to its own footprint made a thinned tree cluster render larger
+     than a full one, and turned a stump into a tower. */
+  const k = cfg.px ? cfg.px : (cfg.tiles*TW)/(foot*Math.SQRT2);
+  const span=cfg.px? Math.max(foot,box.max.y-box.min.y)*cfg.px*1.9 : cfg.tiles*TW*2.2;
+  const W=Math.ceil(span), H=Math.ceil(span);
+  renderer.setSize(W,H,false);
+  cam.position.set(Math.sin(YAW)*Math.cos(PITCH)*40, Math.sin(PITCH)*40, Math.cos(YAW)*Math.cos(PITCH)*40);
+  cam.lookAt(0,(box.max.y-box.min.y)*0.42,0);
+  cam.left=-W/(2*k); cam.right=W/(2*k); cam.top=H/(2*k); cam.bottom=-H/(2*k);
+  cam.updateProjectionMatrix(); cam.updateMatrixWorld(true);
+  const nf=(cfg.spin&&spinNode)?cfg.spin.frames:1;
+  const [cc,cx]=cv(W*nf,H);
+  for(let f=0;f<nf;f++){
+    if(spinNode){
+      const a=(f/nf)*Math.PI*2/(cfg.spin.blades||1);
+      spinNode.rotation[cfg.spin.axis||'z']=(cfg.spin.base||0)+a;
+      spinNode.updateMatrixWorld(true);
+    }
+    renderer.render(scene,cam);
+    cx.drawImage(renderer.domElement,f*W,0);
+  }
+
+  const o=new THREE.Vector3(0,0,0).project(cam);
+  let ax=(o.x*0.5+0.5)*W, ay=(-o.y*0.5+0.5)*H;
+  /* one crop box across every frame, so they stay registered to each other */
+  const d=cx.getImageData(0,0,W*nf,H).data;
+  let x0=W,y0=H,x1=-1,y1=-1;
+  for(let f=0;f<nf;f++)for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    if(d[(y*W*nf+f*W+x)*4+3]>6){ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+  }
+  if(x1<0){ scene.remove(root); throw new Error('nothing rendered for '+cfg.mesh); }
+  const cw=x1-x0+1, ch=y1-y0+1;
+  const [outc,octx]=cv(cw*nf,ch);
+  for(let f=0;f<nf;f++) octx.drawImage(cc, f*W+x0,y0,cw,ch, f*cw,0,cw,ch);
+  scene.remove(root);
+  renderer.setSize(FW,FH,false);
+  return {png:outc.toDataURL('image/png'), w:cw, h:ch, frames:nf,
+          ax:+(ax-x0).toFixed(2), ay:+(ay-y0).toFixed(2)};
+};
+
+/* Drop-in validation. A candidate model that does not share the stock skeleton
+   fails silently -- the clips bind to nothing and every frame renders a T-pose --
+   so check before spending a bake on it. */
+const RIG=["root","hips","upperlegl","lowerlegl","footl","toesl","spine","chest",
+           "upperarmr","lowerarmr","wristr","handr","head","upperarml","lowerarml",
+           "wristl","handl","upperlegr","lowerlegr","footr","toesr"];
+window.__inspect=async function(file,animFiles){
+  const gltf=await load('./glb/'+file);
+  const root=gltf.scene;
+  scene.add(root); root.updateMatrixWorld(true);
+
+  const nodes=new Set(), bones=[], meshes=[];
+  root.traverse(o=>{
+    nodes.add(o.name);
+    if(o.isBone) bones.push(o.name);
+    if(o.isMesh||o.isSkinnedMesh)
+      meshes.push({name:o.name, skinned:!!o.isSkinnedMesh, textured:!!(o.material&&o.material.map)});
+  });
+
+  const box=new THREE.Box3().setFromObject(root);
+  const own=(gltf.animations||[]).map(c=>c.name);
+
+  /* how well does the shared animation library land on this skeleton? A track is
+     named "<node>.<property>", so a track whose node is missing here is dead. */
+  const clips={};
+  for(const f of (animFiles||[])){
+    const a=await load('./glb/anim_'+f+'.glb');
+    for(const c of a.animations) clips[c.name]=c;
+  }
+  const binding={};
+  for(const n in clips){
+    const tr=clips[n].tracks;
+    const hit=tr.filter(t=>nodes.has(t.name.split('.')[0])).length;
+    binding[n]=tr.length?Math.round(hit/tr.length*100):0;
+  }
+  const scores=Object.values(binding);
+  const avg=scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length):0;
+
+  scene.remove(root);
+  return {
+    file, bones, meshes, ownClips:own,
+    height:+(box.max.y-box.min.y).toFixed(3),
+    minY:+box.min.y.toFixed(3), maxY:+box.max.y.toFixed(3),
+    rigMissing:RIG.filter(b=>!nodes.has(b)),
+    rigExtra:bones.filter(b=>!RIG.includes(b)),
+    clipBinding:binding, clipBindingAvg:avg,
+  };
+};
+
+window.__ready=true;
+</script>
