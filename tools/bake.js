@@ -278,6 +278,28 @@ const srv=http.createServer((q,s)=>{
     await br.close(); srv.close(); return;
   }
 
+  /* --refs: reference sheets for image-to-3D, not sprites.
+     Four square-on facings per unit at 768x1024 on a plain ground, which is the
+     shape the 3D generators want. Feeding them our own model means whatever
+     comes back is built on our proportions and our silhouette -- same height,
+     same kit, same stance -- instead of the generator's idea of a spearman,
+     which lands at a different scale and has to be fought back into the game.
+     Written outside the repo: they are input to a tool, not shipped art. */
+  if(process.argv[2]==='--refs'){
+    const RD=process.env.REF_OUT||'/tmp/refs';
+    fs.mkdirSync(RD,{recursive:true});
+    const only=process.argv.slice(3);
+    for(const [name,cfg] of Object.entries(UNITS)){
+      if(only.length&&!only.includes(name))continue;
+      const r=await page.evaluate(c=>window.__bake(c),{...cfg,animFiles:A,refViews:true});
+      const dir=path.join(RD,name); fs.mkdirSync(dir,{recursive:true});
+      for(const [view,dataUrl] of Object.entries(r.refViews))
+        fs.writeFileSync(path.join(dir,view+'.png'),Buffer.from(dataUrl.split(',')[1],'base64'));
+      console.log(name.padEnd(11), r.w+'x'+r.h, Object.keys(r.refViews).join(','));
+    }
+    await br.close(); srv.close(); return;
+  }
+
   /* `bake.js a b c` bakes just those units; without arguments it bakes them all */
   const only=process.argv.slice(2).filter(a=>!a.startsWith('--'));
   /* a single-unit bake must not drop the other units out of the manifest */

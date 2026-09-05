@@ -398,6 +398,79 @@ window.__bake=async function(cfg){
     fit=mb.max.y-mb.min.y;
   }
   setShadowFloor(ground);
+  /* Reference views for image-to-3D.
+     Nothing to do with the game's own sprites: those are 72x82 at a 30 degree
+     pitch, which is a terrible thing to hand a photogrammetry model -- it reads
+     the foreshortening as the shape. These are big, near-level, orthographic,
+     on a flat ground with the contact shadow turned off, four square-on facings
+     in the order the generators expect. The point is that whatever comes back
+     is built on our proportions and our silhouette, not on the generator's idea
+     of what a spearman ought to look like. */
+  if(cfg.refViews){
+    const RW=cfg.refW||768, RH=cfg.refH||1024;
+    const wasVis=shadowFloor.visible; shadowFloor.visible=false;
+    /* The team material is keyed magenta so the game can recolour it per player.
+       Handing that to a 3D generator bakes fluorescent magenta into the mesh, so
+       swap it for a plain cloth colour just for these shots. */
+    const teamCol=MATS.team.color.getHex(); MATS.team.color.setHex(0x8a5a3c);
+    /* The bind pose is a T -- arms straight out, which no generator reads as a
+       person and which will not fit the frame anyway. Stand it in its idle. */
+    const idleSt=(cfg.states||[]).find(x=>x.name==='idle');
+    const idleClip=idleSt&&clips[idleSt.clip];
+    let action=null;
+    if(idleClip){ action=mixer.clipAction(idleClip); action.reset(); action.play(); mixer.setTime(0); }
+    const applyPose=()=>{
+      if(cfg.headScale&&B('head')) B('head').scale.setScalar(cfg.headScale);
+      if(mountLegs){
+        for(const [n,sgn] of [['upperleg.l',1],['upperleg.r',-1]]){
+          const b=B(n); if(!b)continue; b.rotation.x+=0.62; b.rotation.z+=sgn*0.30;
+        }
+        for(const n of ['lowerleg.l','lowerleg.r']){ const b=B(n); if(b) b.rotation.x-=0.30; }
+      }
+      root.updateMatrixWorld(true);
+    };
+    /* Frame on everything -- spear, shield, horse and all. The sprite framing
+       deliberately ignores the weapon so the unit keeps a constant size across
+       the roster; here a cropped spear is a spear the generator will not build. */
+    const full=new THREE.Box3();
+    /* Only what is actually drawn. Box3.expandByObject ignores the visible flag,
+       so a pack model's dozen hidden spare weapons would set the framing and
+       leave the unit a speck in the middle of a very well-composed empty room. */
+    const addVisible=(o)=>o.traverse(m=>{
+      if((m.isMesh||m.isSkinnedMesh)&&m.visible) full.expandByObject(m);
+    });
+    for(const deg of [45,135,225,315]){
+      root.rotation.y=deg*Math.PI/180; if(horse)horse.rotation.y=deg*Math.PI/180;
+      if(action){ mixer.setTime(0); mixer.setTime(0); }
+      applyPose();
+      addVisible(root); if(horse)addVisible(horse);
+    }
+    const ctr=full.getCenter(new THREE.Vector3()), sz=full.getSize(new THREE.Vector3());
+    const rcam=new THREE.OrthographicCamera(-1,1,1,-1,0.01,200);
+    const RP=6*Math.PI/180, d=60;                 /* near-level: no foreshortening to misread */
+    rcam.position.set(ctr.x+Math.sin(YAW)*Math.cos(RP)*d, ctr.y+Math.sin(RP)*d, ctr.z+Math.cos(YAW)*Math.cos(RP)*d);
+    rcam.lookAt(ctr.x,ctr.y,ctr.z);
+    const h=Math.max(sz.y, Math.max(sz.x,sz.z)*(RH/RW))*0.56;   /* a little air, not a lot */
+    rcam.left=-h*(RW/RH); rcam.right=h*(RW/RH); rcam.top=h; rcam.bottom=-h;
+    rcam.updateProjectionMatrix(); rcam.updateMatrixWorld(true);
+    renderer.setSize(RW,RH,false);
+    renderer.setClearColor(0xf2f2f2,1);
+    const out={};
+    for(const [name,deg] of [['front',45],['left',135],['back',225],['right',315]]){
+      const yaw=deg*Math.PI/180;
+      root.rotation.y=yaw; if(horse)horse.rotation.y=yaw;
+      if(action){ mixer.setTime(0); mixer.setTime(0); }
+      applyPose();
+      renderer.render(scene,rcam);
+      out[name]=renderer.domElement.toDataURL('image/png');
+    }
+    if(action)action.stop();
+    MATS.team.color.setHex(teamCol);
+    scene.remove(root); if(horse)scene.remove(horse);
+    shadowFloor.visible=wasVis;
+    renderer.setSize(FW,FH,false); renderer.setClearColor(0x000000,0);
+    return {refViews:out,w:RW,h:RH};
+  }
   const cy=ground+fit*(cfg.mount?0.50:0.46);
   placeCam(fit*(cfg.mount?0.60:0.80)*(cfg.zoom||1), cy);
   cam.updateMatrixWorld(true);
